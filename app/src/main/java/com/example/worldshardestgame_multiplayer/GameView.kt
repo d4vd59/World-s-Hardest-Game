@@ -30,7 +30,6 @@ class GameView @JvmOverloads constructor(
     private val playerSpeed = 5f // Geschwindigkeit reduziert von 10f auf 5f
 
     init {
-        initLevel()
         isFocusableInTouchMode = true
         requestFocus()
     }
@@ -45,31 +44,14 @@ class GameView @JvmOverloads constructor(
         return true
     }
 
-    private fun updatePlayerMovement() {
-        if (!isGameRunning) return
-
-        if (KeyEvent.KEYCODE_W in pressedKeys) {
-            playerY = (playerY - playerSpeed).coerceIn(playerSize / 2, height - playerSize / 2)
-        }
-        if (KeyEvent.KEYCODE_S in pressedKeys) {
-            playerY = (playerY + playerSpeed).coerceIn(playerSize / 2, height - playerSize / 2)
-        }
-        if (KeyEvent.KEYCODE_A in pressedKeys) {
-            playerX = (playerX - playerSpeed).coerceIn(playerSize / 2, width - playerSize / 2)
-        }
-        if (KeyEvent.KEYCODE_D in pressedKeys) {
-            playerX = (playerX + playerSpeed).coerceIn(playerSize / 2, width - playerSize / 2)
-        }
-    }
-
     // Spieler
     private var playerX = 100f
     private var playerY = 100f
     private val playerSize = 40f
 
     // Level-Elemente
-    private val startZone = RectF(50f, 50f, 150f, 150f)
-    private val endZone = RectF(700f, 900f, 800f, 1000f)
+    private val startZone = RectF()
+    private val endZone = RectF()
     private val obstacles = mutableListOf<Enemy>()
     private val coins = mutableListOf<Coin>()
 
@@ -106,11 +88,12 @@ class GameView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
 
-    init {
-        initLevel()
-    }
-
     private fun initLevel() {
+        // Zonen basierend auf View-Größe positionieren
+        val margin = 50f
+        startZone.set(margin, margin, margin + 100f, margin + 100f)
+        endZone.set(width - margin - 100f, height - margin - 150f, width - margin, height - margin - 50f)
+
         playerX = startZone.centerX()
         playerY = startZone.centerY()
         collectedCoins = 0
@@ -128,12 +111,49 @@ class GameView @JvmOverloads constructor(
         coins.add(Coin(400f, 800f, 20f))
     }
 
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        // Erst initialisieren wenn View-Größe bekannt ist
+        if (w > 0 && h > 0 && startZone.isEmpty) {
+            initLevel()
+        }
+    }
+
     fun startLevel() {
         isGameRunning = true
         levelStartTime = System.currentTimeMillis()
         initLevel()
-        invalidate()
+        requestFocus()  // <-- WICHTIG für Tastatur
+        invalidate()    // <-- Startet den Draw-Loop
     }
+
+    // D-Pad Richtungen
+    private var dpadX = 0f
+    private var dpadY = 0f
+
+    fun handleDpadInput(dx: Int, dy: Int, action: Int) {
+        when (action) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                dpadX = dx.toFloat()
+                dpadY = dy.toFloat()
+            }
+            MotionEvent.ACTION_UP -> {
+                dpadX = 0f
+                dpadY = 0f
+            }
+        }
+    }
+
+    private fun updatePlayerMovement() {
+        if (!isGameRunning) return
+
+        // D-Pad Bewegung
+        if (dpadX != 0f || dpadY != 0f) {
+            playerX = (playerX + dpadX * playerSpeed).coerceIn(playerSize / 2, width - playerSize / 2)
+            playerY = (playerY + dpadY * playerSpeed).coerceIn(playerSize / 2, height - playerSize / 2)
+        }
+    }
+
 
     fun stopLevel() {
         isGameRunning = false

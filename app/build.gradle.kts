@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace = "com.example.worldshardestgame_multiplayer"
-    compileSdk = 35
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "com.example.worldshardestgame_multiplayer"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 34
         versionCode = 1
         versionName = "1.0"
     }
@@ -24,22 +24,22 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
     }
 
     kotlinOptions {
-        jvmTarget = "11"
+        jvmTarget = "1.8"
     }
 }
 
 dependencies {
-    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation(platform("com.google.firebase:firebase-bom:32.3.1"))
     implementation("com.google.firebase:firebase-database-ktx")
     implementation("com.google.firebase:firebase-auth-ktx")
-    implementation("androidx.core:core-ktx:1.12.0")
     implementation("com.google.firebase:firebase-analytics")
+    implementation("androidx.core:core-ktx:1.10.1")
     implementation("androidx.appcompat:appcompat:1.6.1")
-    implementation("com.google.android.material:material:1.11.0")
+    implementation("com.google.android.material:material:1.9.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
 }

@@ -8,6 +8,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import android.widget.EditText
+import android.view.MotionEvent
+import android.widget.ImageButton
 import android.widget.Toast
 
 class MainActivity : AppCompatActivity() {
@@ -30,17 +32,36 @@ class MainActivity : AppCompatActivity() {
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
             insets
         }
-
-        // Views initialisieren
         gameView = findViewById(R.id.gameView)
         playerNameText = findViewById(R.id.playerNameText)
         timerText = findViewById(R.id.timerText)
         statsText = findViewById(R.id.statsText)
 
-        // Spieleranzahl auswählen
+        setupDPad()
         showPlayerSelectionDialog()
     }
 
+    private fun setupDPad() {
+        findViewById<ImageButton>(R.id.btnUp).setOnTouchListener { _, event ->
+            gameView.handleDpadInput(0, -1, event.action)
+            true
+        }
+
+        findViewById<ImageButton>(R.id.btnDown).setOnTouchListener { _, event ->
+            gameView.handleDpadInput(0, 1, event.action)
+            true
+        }
+
+        findViewById<ImageButton>(R.id.btnLeft).setOnTouchListener { _, event ->
+            gameView.handleDpadInput(-1, 0, event.action)
+            true
+        }
+
+        findViewById<ImageButton>(R.id.btnRight).setOnTouchListener { _, event ->
+            gameView.handleDpadInput(1, 0, event.action)
+            true
+        }
+    }
 
     private fun startGame(playerCount: Int) {
         gameManager = GameManager(playerCount)
@@ -67,16 +88,14 @@ class MainActivity : AppCompatActivity() {
     private fun startPlayerTurn() {
         val currentPlayer = gameManager.getCurrentPlayer()
 
-        // UI aktualisieren
         playerNameText.text = currentPlayer.name
         updateStats()
 
-        // Timer starten
-        startCountdown(gameManager.getTimeLimit())
-
-        // Level starten
         gameView.startLevel()
+        startCountdown(gameManager.getTimeLimit())
     }
+
+
 
     private fun startCountdown(timeLimit: Long) {
         countDownTimer?.cancel()
