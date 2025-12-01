@@ -27,7 +27,7 @@ class GameView @JvmOverloads constructor(
 
     // In GameView.kt - neue Variable für gedrückte Tasten hinzufügen
     private val pressedKeys = mutableSetOf<Int>()
-    private val playerSpeed = 5f // Geschwindigkeit reduziert von 10f auf 5f
+    private val playerSpeed = 8f // Geschwindigkeit erhöht von 5f auf 8f
 
     init {
         isFocusableInTouchMode = true
@@ -47,7 +47,7 @@ class GameView @JvmOverloads constructor(
     // Spieler
     private var playerX = 100f
     private var playerY = 100f
-    private val playerSize = 40f
+    private val playerSize = 60f // Größer gemacht von 40f auf 60f
 
     // Level-Elemente
     private val startZone = RectF()
@@ -213,28 +213,8 @@ class GameView @JvmOverloads constructor(
 
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (!isGameRunning) return false
-
-        when (event.action) {
-            MotionEvent.ACTION_DOWN -> {
-                touchStartX = event.x
-                touchStartY = event.y
-            }
-            MotionEvent.ACTION_MOVE -> {
-                val dx = event.x - touchStartX
-                val dy = event.y - touchStartY
-
-                // Bewegung mit Begrenzung
-                playerX = (playerX + dx).coerceIn(playerSize / 2, width - playerSize / 2)
-                playerY = (playerY + dy).coerceIn(playerSize / 2, height - playerSize / 2)
-
-                touchStartX = event.x
-                touchStartY = event.y
-
-                invalidate()
-            }
-        }
-        return true
+        // Touch-Steuerung deaktiviert - nur D-Pad verwenden
+        return false
     }
 
     private fun checkCollisions() {

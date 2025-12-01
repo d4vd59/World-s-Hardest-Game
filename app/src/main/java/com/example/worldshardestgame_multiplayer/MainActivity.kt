@@ -9,7 +9,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import android.widget.EditText
 import android.view.MotionEvent
-import android.widget.ImageButton
+import android.widget.Button
 import android.widget.Toast
 
 class MainActivity : AppCompatActivity() {
@@ -42,22 +42,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupDPad() {
-        findViewById<ImageButton>(R.id.btnUp).setOnTouchListener { _, event ->
+        findViewById<android.widget.Button>(R.id.btnUp).setOnTouchListener { _, event ->
             gameView.handleDpadInput(0, -1, event.action)
             true
         }
 
-        findViewById<ImageButton>(R.id.btnDown).setOnTouchListener { _, event ->
+        findViewById<android.widget.Button>(R.id.btnDown).setOnTouchListener { _, event ->
             gameView.handleDpadInput(0, 1, event.action)
             true
         }
 
-        findViewById<ImageButton>(R.id.btnLeft).setOnTouchListener { _, event ->
+        findViewById<android.widget.Button>(R.id.btnLeft).setOnTouchListener { _, event ->
             gameView.handleDpadInput(-1, 0, event.action)
             true
         }
 
-        findViewById<ImageButton>(R.id.btnRight).setOnTouchListener { _, event ->
+        findViewById<android.widget.Button>(R.id.btnRight).setOnTouchListener { _, event ->
             gameView.handleDpadInput(1, 0, event.action)
             true
         }
