@@ -378,8 +378,13 @@ class GameView @JvmOverloads constructor(
         // Kollision mit Hindernissen
         obstacles.forEach { enemy ->
             if (rectIntersectsCircle(playerRect, enemy.x, enemy.y, enemy.radius)) {
-                _isGameRunning = false
-                onPlayerDied?.invoke()
+                if (_isGameRunning) {  // Nur wenn Spiel noch läuft
+                    _isGameRunning = false
+                    // Callback auf UI-Thread ausführen um Race Conditions zu vermeiden
+                    post {
+                        onPlayerDied?.invoke()
+                    }
+                }
             }
         }
 
@@ -410,8 +415,13 @@ class GameView @JvmOverloads constructor(
         Log.d("GameView", "Level completion check: allCoinsCollected=$allCoinsCollected, inEndZone=$inEndZone")
 
         if (allCoinsCollected && inEndZone) {
-            _isGameRunning = false
-            onLevelCompleted?.invoke()
+            if (_isGameRunning) {  // Nur wenn Spiel noch läuft
+                _isGameRunning = false
+                // Callback auf UI-Thread ausführen um Race Conditions zu vermeiden
+                post {
+                    onLevelCompleted?.invoke()
+                }
+            }
         }
     }
 

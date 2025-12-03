@@ -110,9 +110,14 @@ class MainActivity : AppCompatActivity() {
         gameView.onPlayerDied = {
             networkGameManager.onPlayerDied()
 
-            // Respawn automatisch - Level neu starten
-            levelStartTime = System.currentTimeMillis()
-            gameView.startLevel()
+            // Stoppe Level erstmal komplett
+            gameView.stopLevel()
+
+            // Respawn automatisch - Level neu starten mit kleinem Delay
+            gameView.postDelayed({
+                levelStartTime = System.currentTimeMillis()
+                gameView.startLevel()
+            }, 100) // 100ms Delay um Race Conditions zu vermeiden
         }
 
         gameView.onPositionChanged = { x, y ->
@@ -149,8 +154,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun showLobbyScreen() {
         btnReady.visibility = Button.VISIBLE
-        playerNameText.text = "Lobby von $playerName"
-        timerText.text = "Game ID: $gameId"
+        playerNameText.text = "$playerName in Lobby"
+        timerText.text = "Bereit?"
         statsText.text = "Warte auf weitere Spieler..."
     }
 
@@ -171,16 +176,27 @@ class MainActivity : AppCompatActivity() {
                 // Alle spielen gleichzeitig - zeige eigene Stats
                 val myPlayer = gameState.players.find { it.playerId == playerId }
                 if (myPlayer != null) {
-                    playerNameText.text = playerName
-                    statsText.text = "Level: ${myPlayer.levelsCompleted} | Tode: ${myPlayer.deaths}"
+                    // Aktuelles Level des Spielers (levelsCompleted + 1, da 0-basiert)
+                    val currentPlayerLevel = myPlayer.levelsCompleted + 1
+
+                    playerNameText.text = "$playerName - Level $currentPlayerLevel"
+                    statsText.text = "Geschaffte Level: ${myPlayer.levelsCompleted} | Tode: ${myPlayer.deaths}"
+                    timerText.text = "Level $currentPlayerLevel"
+
+                    // Setze das korrekte Level in GameView basierend auf Spieler-Fortschritt
+                    if (gameView.currentLevel != currentPlayerLevel) {
+                        gameView.currentLevel = currentPlayerLevel
+                        // Stoppe und starte Level neu wenn sich das Level geändert hat
+                        if (gameView.isGameRunning) {
+                            gameView.stopLevel()
+                        }
+                    }
                 }
 
                 // Starte mein Spiel wenn noch nicht gestartet
                 if (!gameView.isGameRunning) {
                     levelStartTime = System.currentTimeMillis()
-                    gameView.currentLevel = gameState.currentLevel
                     gameView.startLevel()
-                    // Kein Timer mehr - jeder spielt in seinem Tempo
                 }
 
                 // Prüfe ob jemand gewonnen hat
