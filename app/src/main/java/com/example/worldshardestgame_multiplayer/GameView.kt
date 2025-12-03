@@ -298,11 +298,11 @@ class GameView @JvmOverloads constructor(
             }
         }
 
-        // Hindernisse zeichnen und bewegen (nutze inner Bounds)
+        // Hindernisse zeichnen und bewegen (nutze inner Bounds + Safe-Zonen)
         runtimeInnerBounds.set(innerLeft, innerTop, innerRight, innerBottom)
         obstacles.forEach { enemy ->
             if (isGameRunning) {
-                enemy.update(runtimeInnerBounds)
+                enemy.update(runtimeInnerBounds, startZone, endZone)
             }
             canvas.drawCircle(enemy.x, enemy.y, enemy.radius, obstaclePaint)
         }
@@ -375,14 +375,21 @@ class GameView @JvmOverloads constructor(
             playerY + playerSize / 2
         )
 
-        // Kollision mit Hindernissen
-        obstacles.forEach { enemy ->
-            if (rectIntersectsCircle(playerRect, enemy.x, enemy.y, enemy.radius)) {
-                if (_isGameRunning) {  // Nur wenn Spiel noch läuft
-                    _isGameRunning = false
-                    // Callback auf UI-Thread ausführen um Race Conditions zu vermeiden
-                    post {
-                        onPlayerDied?.invoke()
+        // Prüfe ob Spieler in einer Safe-Zone ist (Start oder End)
+        val inStartZone = RectF.intersects(playerRect, startZone)
+        val inEndZone = RectF.intersects(playerRect, endZone)
+        val inSafeZone = inStartZone || inEndZone
+
+        // Kollision mit Hindernissen - NUR wenn Spieler NICHT in Safe-Zone ist
+        if (!inSafeZone) {
+            obstacles.forEach { enemy ->
+                if (rectIntersectsCircle(playerRect, enemy.x, enemy.y, enemy.radius)) {
+                    if (_isGameRunning) {  // Nur wenn Spiel noch läuft
+                        _isGameRunning = false
+                        // Callback auf UI-Thread ausführen um Race Conditions zu vermeiden
+                        post {
+                            onPlayerDied?.invoke()
+                        }
                     }
                 }
             }
@@ -434,7 +441,7 @@ class GameView @JvmOverloads constructor(
         var speedY: Float,
         val radius: Float
     ) {
-        fun update(bounds: RectF) {
+        fun update(bounds: RectF, startZone: RectF? = null, endZone: RectF? = null) {
             x += speedX
             y += speedY
 
@@ -453,6 +460,75 @@ class GameView @JvmOverloads constructor(
                 y = bounds.bottom - radius
                 speedY = -speedY
             }
+
+            // Abprallen an Safe-Zonen (Start und End)
+            startZone?.let { zone ->
+                if (circleIntersectsRect(x, y, radius, zone)) {
+                    // Finde die nächste Kante und pralle ab
+                    val distLeft = kotlin.math.abs(x - zone.left)
+                    val distRight = kotlin.math.abs(x - zone.right)
+                    val distTop = kotlin.math.abs(y - zone.top)
+                    val distBottom = kotlin.math.abs(y - zone.bottom)
+
+                    val minDist = minOf(distLeft, distRight, distTop, distBottom)
+                    when (minDist) {
+                        distLeft -> {
+                            x = zone.left - radius
+                            speedX = -kotlin.math.abs(speedX)
+                        }
+                        distRight -> {
+                            x = zone.right + radius
+                            speedX = kotlin.math.abs(speedX)
+                        }
+                        distTop -> {
+                            y = zone.top - radius
+                            speedY = -kotlin.math.abs(speedY)
+                        }
+                        distBottom -> {
+                            y = zone.bottom + radius
+                            speedY = kotlin.math.abs(speedY)
+                        }
+                    }
+                }
+            }
+
+            endZone?.let { zone ->
+                if (circleIntersectsRect(x, y, radius, zone)) {
+                    // Finde die nächste Kante und pralle ab
+                    val distLeft = kotlin.math.abs(x - zone.left)
+                    val distRight = kotlin.math.abs(x - zone.right)
+                    val distTop = kotlin.math.abs(y - zone.top)
+                    val distBottom = kotlin.math.abs(y - zone.bottom)
+
+                    val minDist = minOf(distLeft, distRight, distTop, distBottom)
+                    when (minDist) {
+                        distLeft -> {
+                            x = zone.left - radius
+                            speedX = -kotlin.math.abs(speedX)
+                        }
+                        distRight -> {
+                            x = zone.right + radius
+                            speedX = kotlin.math.abs(speedX)
+                        }
+                        distTop -> {
+                            y = zone.top - radius
+                            speedY = -kotlin.math.abs(speedY)
+                        }
+                        distBottom -> {
+                            y = zone.bottom + radius
+                            speedY = kotlin.math.abs(speedY)
+                        }
+                    }
+                }
+            }
+        }
+
+        private fun circleIntersectsRect(cx: Float, cy: Float, radius: Float, rect: RectF): Boolean {
+            val closestX = cx.coerceIn(rect.left, rect.right)
+            val closestY = cy.coerceIn(rect.top, rect.bottom)
+            val distX = cx - closestX
+            val distY = cy - closestY
+            return (distX * distX + distY * distY) < (radius * radius)
         }
     }
 
