@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.util.AttributeSet
+import android.util.Log
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -175,8 +176,8 @@ class GameView @JvmOverloads constructor(
             }
 
             // Optional: ein paar Münzen oberhalb des ersten Lanes und am Ziel
-            coins.add(Coin(innerBounds.centerX(), innerBounds.top + 20f, 12f))
-            coins.add(Coin(innerBounds.centerX(), innerBounds.bottom - 40f, 12f))
+            coins.add(Coin(innerBounds.centerX(), innerBounds.top + 20f, 20f))
+            coins.add(Coin(innerBounds.centerX(), innerBounds.bottom - 40f, 20f))
         } else {
             // ...bestehende/ältere Level-Logik (wie vorher) - abwechslungsreiche Hindernisse
             // Kreisförmig bewegende Gegner (verschiedene Geschwindigkeiten)
@@ -325,11 +326,32 @@ class GameView @JvmOverloads constructor(
         return true
     }
 
+    private fun calculateDistance(x1: Float, y1: Float, x2: Float, y2: Float): Float {
+        val dx = x1 - x2
+        val dy = y1 - y2
+        return sqrt(dx * dx + dy * dy)
+    }
+
+    private fun rectIntersectsCircle(rect: RectF, cx: Float, cy: Float, r: Float): Boolean {
+        val closestX = cx.coerceIn(rect.left, rect.right)
+        val closestY = cy.coerceIn(rect.top, rect.bottom)
+        val distanceX = cx - closestX
+        val distanceY = cy - closestY
+        return (distanceX * distanceX + distanceY * distanceY) <= (r * r)
+    }
+
     private fun checkCollisions() {
+        // Spieler-Rechteck erstellen
+        val playerRect = RectF(
+            playerX - playerSize / 2,
+            playerY - playerSize / 2,
+            playerX + playerSize / 2,
+            playerY + playerSize / 2
+        )
+
         // Kollision mit Hindernissen
         obstacles.forEach { enemy ->
-            val distance = calculateDistance(playerX, playerY, enemy.x, enemy.y)
-            if (distance < (playerSize / 2 + enemy.radius)) {
+            if (rectIntersectsCircle(playerRect, enemy.x, enemy.y, enemy.radius)) {
                 isGameRunning = false
                 onPlayerDied?.invoke()
             }
@@ -337,30 +359,36 @@ class GameView @JvmOverloads constructor(
 
         // Münzen einsammeln
         coins.forEach { coin ->
-            if (!coin.collected) {
-                val distance = calculateDistance(playerX, playerY, coin.x, coin.y)
-                if (distance < (playerSize / 2 + coin.radius)) {
-                    coin.collected = true
-                    collectedCoins++
-                }
+            if (!coin.collected && rectIntersectsCircle(playerRect, coin.x, coin.y, coin.radius)) {
+                coin.collected = true
+                collectedCoins++
+                Log.d("GameView", "Coin collected! Total collected: $collectedCoins / ${coins.size}")
             }
         }
     }
 
     private fun checkLevelCompletion() {
         val allCoinsCollected = coins.all { it.collected }
-        val inEndZone = endZone.contains(playerX, playerY)
+
+        // Spieler-Rechteck erstellen
+        val playerRect = RectF(
+            playerX - playerSize / 2,
+            playerY - playerSize / 2,
+            playerX + playerSize / 2,
+            playerY + playerSize / 2
+        )
+
+        // Prüfen ob Spieler-Rechteck die Endzone überlappt
+        val inEndZone = RectF.intersects(playerRect, endZone)
+
+        Log.d("GameView", "Level completion check: allCoinsCollected=$allCoinsCollected, inEndZone=$inEndZone")
+
         if (allCoinsCollected && inEndZone) {
             isGameRunning = false
             onLevelCompleted?.invoke()
         }
     }
 
-    private fun calculateDistance(x1: Float, y1: Float, x2: Float, y2: Float): Float {
-        val dx = x1 - x2
-        val dy = y1 - y2
-        return sqrt(dx * dx + dy * dy)
-    }
 
     // Hilfsklassen
     data class Enemy(
