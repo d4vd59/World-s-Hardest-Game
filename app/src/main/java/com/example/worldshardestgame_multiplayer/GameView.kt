@@ -23,6 +23,11 @@ class GameView @JvmOverloads constructor(
     var onLevelCompleted: (() -> Unit)? = null
     var onPlayerDied: (() -> Unit)? = null
     var onTimeUpdate: ((Long) -> Unit)? = null
+    var onPositionChanged: ((Float, Float) -> Unit)? = null
+
+    // Multiplayer - andere Spieler
+    private val otherPlayers = mutableMapOf<String, PlayerPosition>()
+    private var myPlayerId: String? = null
 
     private val pressedKeys = mutableSetOf<Int>()
     private val playerSpeed = 8f
@@ -70,7 +75,8 @@ class GameView @JvmOverloads constructor(
     private var obstacleSpeedMultiplier: Float = 1.2f
 
     // Spiel-Status
-    private var isGameRunning = false
+    private var _isGameRunning = false
+    val isGameRunning: Boolean get() = _isGameRunning
     private var levelStartTime = 0L
     private var collectedCoins = 0
 
@@ -99,6 +105,10 @@ class GameView @JvmOverloads constructor(
     }
     private val coinPaint = Paint().apply {
         color = Color.YELLOW
+        style = Paint.Style.FILL
+    }
+    private val otherPlayerPaint = Paint().apply {
+        color = Color.GRAY
         style = Paint.Style.FILL
     }
 
@@ -205,7 +215,7 @@ class GameView @JvmOverloads constructor(
     }
 
     fun startLevel() {
-        isGameRunning = true
+        _isGameRunning = true
         levelStartTime = System.currentTimeMillis()
         initLevel()
         requestFocus()
@@ -241,10 +251,15 @@ class GameView @JvmOverloads constructor(
             playerX = (playerX + dpadX * playerSpeed).coerceIn(innerLeft + playerSize / 2, innerRight - playerSize / 2)
             playerY = (playerY + dpadY * playerSpeed).coerceIn(innerTop + playerSize / 2, innerBottom - playerSize / 2)
         }
+
+        // Position an andere Spieler im Multiplayer senden
+        myPlayerId?.let {
+            onPositionChanged?.invoke(playerX, playerY)
+        }
     }
 
     fun stopLevel() {
-        isGameRunning = false
+        _isGameRunning = false
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -301,6 +316,17 @@ class GameView @JvmOverloads constructor(
             playerPaint
         )
 
+        // Andere Spieler im Multiplayer zeichnen
+        otherPlayers.values.forEach { player ->
+            canvas.drawRect(
+                player.x - playerSize / 2,
+                player.y - playerSize / 2,
+                player.x + playerSize / 2,
+                player.y + playerSize / 2,
+                otherPlayerPaint
+            )
+        }
+
         // Kollisionserkennung
         if (isGameRunning) {
             checkCollisions()
@@ -352,7 +378,7 @@ class GameView @JvmOverloads constructor(
         // Kollision mit Hindernissen
         obstacles.forEach { enemy ->
             if (rectIntersectsCircle(playerRect, enemy.x, enemy.y, enemy.radius)) {
-                isGameRunning = false
+                _isGameRunning = false
                 onPlayerDied?.invoke()
             }
         }
@@ -384,7 +410,7 @@ class GameView @JvmOverloads constructor(
         Log.d("GameView", "Level completion check: allCoinsCollected=$allCoinsCollected, inEndZone=$inEndZone")
 
         if (allCoinsCollected && inEndZone) {
-            isGameRunning = false
+            _isGameRunning = false
             onLevelCompleted?.invoke()
         }
     }
@@ -426,4 +452,24 @@ class GameView @JvmOverloads constructor(
         val radius: Float,
         var collected: Boolean = false
     )
+
+    data class PlayerPosition(
+        var x: Float,
+        var y: Float
+    )
+
+    // Multiplayer Methoden
+    fun setMyPlayerId(playerId: String) {
+        myPlayerId = playerId
+    }
+
+    fun updateOtherPlayers(players: Map<String, com.example.worldshardestgame_multiplayer.PlayerPosition>) {
+        otherPlayers.clear()
+        players.forEach { (playerId, position) ->
+            if (playerId != myPlayerId) {
+                otherPlayers[playerId] = PlayerPosition(position.x, position.y)
+            }
+        }
+        invalidate()
+    }
 }

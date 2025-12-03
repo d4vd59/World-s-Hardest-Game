@@ -7,21 +7,25 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import android.widget.EditText
-import android.view.MotionEvent
 import android.widget.Button
 import android.widget.Toast
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var gameView: GameView
-    private lateinit var gameManager: GameManager
+    private lateinit var networkGameManager: NetworkGameManager
+    private lateinit var firebaseManager: FirebaseManager
     private lateinit var playerNameText: TextView
     private lateinit var timerText: TextView
     private lateinit var statsText: TextView
-    private lateinit var firebaseManager: FirebaseManager // HIER
-    private var gameId: String? = null // HIER
+    private lateinit var btnReady: Button
+
+    private var gameId: String = ""
+    private var playerId: String = ""
+    private var playerName: String = ""
     private var countDownTimer: CountDownTimer? = null
+    private var lastPositionUpdate = 0L
+    private var levelStartTime = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,156 +36,193 @@ class MainActivity : AppCompatActivity() {
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
             insets
         }
+
+        // Intent-Daten holen
+        gameId = intent.getStringExtra("GAME_ID") ?: run {
+            Toast.makeText(this, "Fehler: Keine Game-ID", Toast.LENGTH_SHORT).show()
+            finish()
+            return
+        }
+        playerId = intent.getStringExtra("PLAYER_ID") ?: run {
+            Toast.makeText(this, "Fehler: Keine Player-ID", Toast.LENGTH_SHORT).show()
+            finish()
+            return
+        }
+        playerName = intent.getStringExtra("PLAYER_NAME") ?: "Spieler"
+
+        // Views initialisieren
         gameView = findViewById(R.id.gameView)
         playerNameText = findViewById(R.id.playerNameText)
         timerText = findViewById(R.id.timerText)
         statsText = findViewById(R.id.statsText)
+        btnReady = findViewById(R.id.btnReady)
+
+        playerNameText.text = playerName
+
+        // Firebase und Network Manager initialisieren
+        firebaseManager = FirebaseManager()
+        networkGameManager = NetworkGameManager(firebaseManager, gameId, playerId)
+
+        // GameView konfigurieren
+        gameView.setMyPlayerId(playerId)
 
         setupDPad()
-        showPlayerSelectionDialog()
+        setupGameCallbacks()
+        setupNetworkCallbacks()
+        setupReadyButton()
+
+        // Lobby-Modus
+        showLobbyScreen()
     }
 
     private fun setupDPad() {
-        findViewById<android.widget.Button>(R.id.btnUp).setOnTouchListener { _, event ->
+        findViewById<Button>(R.id.btnUp).setOnTouchListener { _, event ->
             gameView.handleDpadInput(0, -1, event.action)
             true
         }
 
-        findViewById<android.widget.Button>(R.id.btnDown).setOnTouchListener { _, event ->
+        findViewById<Button>(R.id.btnDown).setOnTouchListener { _, event ->
             gameView.handleDpadInput(0, 1, event.action)
             true
         }
 
-        findViewById<android.widget.Button>(R.id.btnLeft).setOnTouchListener { _, event ->
+        findViewById<Button>(R.id.btnLeft).setOnTouchListener { _, event ->
             gameView.handleDpadInput(-1, 0, event.action)
             true
         }
 
-        findViewById<android.widget.Button>(R.id.btnRight).setOnTouchListener { _, event ->
+        findViewById<Button>(R.id.btnRight).setOnTouchListener { _, event ->
             gameView.handleDpadInput(1, 0, event.action)
             true
         }
     }
 
-    private fun startGame(playerCount: Int) {
-        gameManager = GameManager(playerCount)
-
-        // Callbacks setzen
+    private fun setupGameCallbacks() {
         gameView.onLevelCompleted = {
-            gameManager.onLevelCompleted()
-            showNextPlayerDialog()
+            val elapsedTime = System.currentTimeMillis() - levelStartTime
+            networkGameManager.onLevelCompleted(elapsedTime)
+
+            // Starte nächstes Level automatisch
+            levelStartTime = System.currentTimeMillis()
+            gameView.startLevel()
         }
 
         gameView.onPlayerDied = {
-            gameManager.onPlayerDied()
-            showNextPlayerDialog()
+            networkGameManager.onPlayerDied()
+
+            // Respawn automatisch - Level neu starten
+            levelStartTime = System.currentTimeMillis()
+            gameView.startLevel()
         }
 
-        gameView.onTimeUpdate = { elapsedTime ->
-            updateTimer(elapsedTime)
+        gameView.onPositionChanged = { x, y ->
+            // Position throttled updaten (max alle 100ms)
+            val now = System.currentTimeMillis()
+            if (now - lastPositionUpdate > 100) {
+                networkGameManager.updatePosition(x, y)
+                lastPositionUpdate = now
+            }
         }
-
-        // Erstes Level starten
-        startPlayerTurn()
     }
 
-    private fun startPlayerTurn() {
-        val currentPlayer = gameManager.getCurrentPlayer()
-
-        playerNameText.text = currentPlayer.name
-        updateStats()
-
-        gameView.startLevel()
-        startCountdown(gameManager.getTimeLimit())
-    }
-
-
-
-    private fun startCountdown(timeLimit: Long) {
-        countDownTimer?.cancel()
-        countDownTimer = object : CountDownTimer(timeLimit, 1000) {
-            override fun onTick(millisUntilFinished: Long) {
-                val seconds = millisUntilFinished / 1000
-                timerText.text = "Zeit: ${formatTime(millisUntilFinished)}"
-            }
-
-            override fun onFinish() {
-                gameView.stopLevel()
-                gameManager.onTimeExpired()
-                showNextPlayerDialog()
-            }
-        }.start()
-    }
-
-    private fun updateTimer(elapsedTime: Long) {
-        // Nur zur Anzeige der verstrichenen Zeit
-    }
-
-    private fun updateStats() {
-        val player = gameManager.getCurrentPlayer()
-        statsText.text = "Level: ${player.levelsCompleted} | Tode: ${player.deaths}"
-    }
-
-    private fun showNextPlayerDialog() {
-        countDownTimer?.cancel()
-
-        val leaderboard = gameManager.getLeaderboard()
-        val message = buildString {
-            append("Aktueller Stand:\n\n")
-            leaderboard.forEachIndexed { index, player ->
-                append("${index + 1}. ${player.name}\n")
-                append("   Level: ${player.levelsCompleted}, Tode: ${player.deaths}\n\n")
+    private fun setupNetworkCallbacks() {
+        networkGameManager.setOnGameStateChanged { gameState ->
+            runOnUiThread {
+                updateGameState(gameState)
             }
         }
 
-        AlertDialog.Builder(this)
-            .setTitle("Spielerwechsel")
-            .setMessage(message)
-            .setPositiveButton("Weiter") { _, _ ->
-                if (gameManager.isGameOver()) {
-                    showGameOverDialog()
-                } else {
-                    startPlayerTurn()
+        networkGameManager.setOnPlayerPositionsChanged { positions ->
+            runOnUiThread {
+                gameView.updateOtherPlayers(positions)
+            }
+        }
+    }
+
+    private fun setupReadyButton() {
+        btnReady.setOnClickListener {
+            networkGameManager.setReady(true)
+            btnReady.isEnabled = false
+            btnReady.text = "Bereit ✓"
+        }
+    }
+
+    private fun showLobbyScreen() {
+        btnReady.visibility = Button.VISIBLE
+        playerNameText.text = "Lobby von $playerName"
+        timerText.text = "Game ID: $gameId"
+        statsText.text = "Warte auf weitere Spieler..."
+    }
+
+    private fun updateGameState(gameState: GameStateData) {
+        when (gameState.status) {
+            "waiting" -> {
+                val readyCount = gameState.players.count { it.isReady }
+                val playerCount = gameState.players.size
+                statsText.text = "Spieler in Lobby: $playerCount | bereit: $readyCount"
+
+                if (networkGameManager.allPlayersReady() && playerId == gameState.hostId) {
+                    networkGameManager.startGame()
                 }
             }
-            .setCancelable(false)
-            .show()
+            "playing" -> {
+                btnReady.visibility = Button.GONE
+
+                // Alle spielen gleichzeitig - zeige eigene Stats
+                val myPlayer = gameState.players.find { it.playerId == playerId }
+                if (myPlayer != null) {
+                    playerNameText.text = playerName
+                    statsText.text = "Level: ${myPlayer.levelsCompleted} | Tode: ${myPlayer.deaths}"
+                }
+
+                // Starte mein Spiel wenn noch nicht gestartet
+                if (!gameView.isGameRunning) {
+                    levelStartTime = System.currentTimeMillis()
+                    gameView.currentLevel = gameState.currentLevel
+                    gameView.startLevel()
+                    // Kein Timer mehr - jeder spielt in seinem Tempo
+                }
+
+                // Prüfe ob jemand gewonnen hat
+                if (networkGameManager.isGameOver()) {
+                    showGameOverDialog()
+                }
+            }
+            "finished" -> {
+                showGameOverDialog()
+            }
+        }
     }
 
+    // Kein Timer mehr - alle spielen gleichzeitig ohne Zeitlimit
+
     private fun showGameOverDialog() {
-        val winner = gameManager.getWinner()
+        countDownTimer?.cancel()
+        gameView.stopLevel()
+
+        val winner = networkGameManager.getWinner()
+        val leaderboard = networkGameManager.getLeaderboard()
+
+        val message = buildString {
+            append("🏆 Gewinner: ${winner?.name}\n")
+            append("Level: ${winner?.levelsCompleted}\n")
+            append("Tode: ${winner?.deaths}\n\n")
+            append("Rangliste:\n")
+            leaderboard.forEachIndexed { index, player ->
+                append("${index + 1}. ${player.name} - ")
+                append("L${player.levelsCompleted} T${player.deaths}\n")
+            }
+        }
+
         AlertDialog.Builder(this)
             .setTitle("Spiel beendet!")
-            .setMessage("Gewinner: ${winner.name}\nLevel: ${winner.levelsCompleted}\nTode: ${winner.deaths}")
-            .setPositiveButton("Neues Spiel") { _, _ ->
-                showPlayerSelectionDialog()
-            }
-            .setNegativeButton("Beenden") { _, _ ->
+            .setMessage(message)
+            .setPositiveButton("OK") { _, _ ->
                 finish()
             }
             .setCancelable(false)
             .show()
     }
-    private fun showLocalPlayerCountDialog() {
-        val options = arrayOf("2 Spieler", "3 Spieler", "4 Spieler")
-        AlertDialog.Builder(this)
-            .setTitle("Spieleranzahl wählen")
-            .setItems(options) { _, which ->
-                startGame(which + 2)
-            }
-            .setCancelable(false)
-            .show()
-    }
-
-    private fun joinOnlineGame(gameId: String) {
-        firebaseManager = FirebaseManager()
-        firebaseManager.joinGame(gameId, 1) {
-            this.gameId = gameId
-            Toast.makeText(this, "Spiel beigetreten", Toast.LENGTH_SHORT).show()
-            startGame(2)
-        }
-    }
-
 
     private fun formatTime(millis: Long): String {
         val seconds = (millis / 1000) % 60
@@ -192,42 +233,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         countDownTimer?.cancel()
-    }
-
-    private fun showPlayerSelectionDialog() {
-        val options = arrayOf("Lokal (2-4 Spieler)", "Online erstellen", "Online beitreten")
-        AlertDialog.Builder(this)
-            .setTitle("Spielmodus wählen")
-            .setItems(options) { _, which ->
-                when (which) {
-                    0 -> showLocalPlayerCountDialog()
-                    1 -> createOnlineGame()
-                    2 -> showJoinGameDialog()
-                }
-            }
-            .setCancelable(false)
-            .show()
-    }
-
-    private fun createOnlineGame() {
-        firebaseManager = FirebaseManager()
-        firebaseManager.createGame(2) { id ->
-            gameId = id
-            Toast.makeText(this, "Spiel-ID: $id", Toast.LENGTH_LONG).show()
-            startGame(2)
-        }
-    }
-
-    private fun showJoinGameDialog() {
-        val input = EditText(this)
-        AlertDialog.Builder(this)
-            .setTitle("Spiel-ID eingeben")
-            .setView(input)
-            .setPositiveButton("Beitreten") { _, _ ->
-                val id = input.text.toString()
-                joinOnlineGame(id)
-            }
-            .show()
+        networkGameManager.leaveGame()
     }
 
 }
