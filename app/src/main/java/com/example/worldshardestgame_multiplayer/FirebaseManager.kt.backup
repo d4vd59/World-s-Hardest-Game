@@ -75,6 +75,7 @@ class FirebaseManager {
                     "deaths" to 0,
                     "totalTime" to 0L,
                     "isReady" to false,
+                    "online" to false,
                     "x" to 0f,
                     "y" to 0f,
                     "lastSeen" to ServerValue.TIMESTAMP
@@ -113,6 +114,7 @@ class FirebaseManager {
                 "deaths" to 0,
                 "totalTime" to 0L,
                 "isReady" to false,
+                "online" to false,
                 "x" to 0f,
                 "y" to 0f,
                 "lastSeen" to ServerValue.TIMESTAMP
@@ -483,24 +485,21 @@ class FirebaseManager {
                 // Prüfe ob alle Spieler offline sind
                 var allOffline = true
                 val playersSnapshot = gameSnapshot.child("players")
-                val currentTime = System.currentTimeMillis()
-                val timeoutThreshold = 5 * 60 * 1000L // 5 Minuten
-
                 for (playerSnapshot in playersSnapshot.children) {
-                    val lastSeen = playerSnapshot.child("lastSeen").getValue(Long::class.java) ?: 0L
-                    if (currentTime - lastSeen < timeoutThreshold) {
+                    val online = playerSnapshot.child("online").getValue(Boolean::class.java) ?: false
+                    if (online) {
                         allOffline = false
                         break
                     }
                 }
 
                 if (allOffline) {
-                    // Alle Spieler sind inaktiv - lösche die Lobby
+                    // Alle Spieler sind offline - lösche die Lobby
                     gamesRef.child(gameId).removeValue().addOnSuccessListener {
                         deleteInvitationsForGame(gameId)
                         deletedCount++
                         processedCount++
-                        Log.d(TAG, "Lobby mit nur inaktiven Spielern gelöscht: $gameId")
+                        Log.d(TAG, "Lobby mit nur offline Spielern gelöscht: $gameId")
                         if (processedCount == totalGames) callback(true, deletedCount)
                     }.addOnFailureListener {
                         processedCount++
@@ -556,6 +555,7 @@ class FirebaseManager {
                     "deaths" to 0,
                     "totalTime" to 0L,
                     "isReady" to false,
+                    "online" to false,
                     "x" to 0f,
                     "y" to 0f,
                     "lastSeen" to ServerValue.TIMESTAMP
@@ -625,6 +625,7 @@ class FirebaseManager {
                 "deaths" to 0,
                 "totalTime" to 0L,
                 "isReady" to false,
+                "online" to false,
                 "x" to 0f,
                 "y" to 0f,
                 "lastSeen" to ServerValue.TIMESTAMP
@@ -851,7 +852,8 @@ class FirebaseManager {
         val playerRef = gamesRef.child(gameId).child("players").child(playerId)
         val gameRef = gamesRef.child(gameId)
 
-        // Update lastSeen timestamp
+        // Setze Spieler als online
+        playerRef.child("online").setValue(true)
         playerRef.child("lastSeen").setValue(ServerValue.TIMESTAMP)
 
         // WICHTIG: Bei Disconnect entferne den Spieler komplett aus der Lobby
@@ -967,45 +969,44 @@ class FirebaseManager {
                     continue
                 }
 
-                // Prüfe ob alle Spieler inaktiv sind (basierend auf lastSeen)
-                val timeoutThreshold = 5 * 60 * 1000L // 5 Minuten
-                var anyActive = false
+                // Prüfe ob alle Spieler offline sind
+                var anyOnline = false
                 for (playerSnapshot in playersSnapshot.children) {
-                    val lastSeen = playerSnapshot.child("lastSeen").getValue(Long::class.java) ?: 0L
-                    if (currentTime - lastSeen < timeoutThreshold) {
-                        anyActive = true
+                    val online = playerSnapshot.child("online").getValue(Boolean::class.java) ?: false
+                    if (online) {
+                        anyOnline = true
                         break
                     }
                 }
 
-                if (!anyActive) {
-                    // Alle inaktiv - prüfe Alter der Lobby
+                if (!anyOnline) {
+                    // Alle offline - prüfe Alter der Lobby
                     val createdAt = gameSnapshot.child("createdAt").getValue(Long::class.java) ?: 0L
                     if (createdAt > 0 && currentTime - createdAt > maxAge) {
-                        Log.d(TAG, "Lösche alte Lobby mit inaktiven Spielern: $gameId")
+                        Log.d(TAG, "Lösche alte Lobby mit offline Spielern: $gameId")
                         gamesRef.child(gameId).removeValue().addOnSuccessListener {
                             deleteInvitationsForGame(gameId)
                         }
                     } else {
-                        // Lobby ist nicht alt genug - lösche nach 10 Sekunden wenn immer noch alle inaktiv
+                        // Lobby ist nicht alt genug - lösche nach 10 Sekunden wenn immer noch alle offline
                         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                             gamesRef.child(gameId).child("players").get().addOnSuccessListener { checkSnapshot ->
-                                var stillAnyActive = false
+                                var stillAnyOnline = false
                                 for (playerSnapshot in checkSnapshot.children) {
-                                    val lastSeen = playerSnapshot.child("lastSeen").getValue(Long::class.java) ?: 0L
-                                    if (currentTime - lastSeen < timeoutThreshold) {
-                                        stillAnyActive = true
+                                    val online = playerSnapshot.child("online").getValue(Boolean::class.java) ?: false
+                                    if (online) {
+                                        stillAnyOnline = true
                                         break
                                     }
                                 }
 
-                                if (!stillAnyActive && (!checkSnapshot.exists() || checkSnapshot.childrenCount == 0L)) {
-                                    Log.d(TAG, "Lösche Lobby mit dauerhaft inaktiven Spielern: $gameId")
+                                if (!stillAnyOnline && (!checkSnapshot.exists() || checkSnapshot.childrenCount == 0L)) {
+                                    Log.d(TAG, "Lösche Lobby mit dauerhaft offline Spielern: $gameId")
                                     gamesRef.child(gameId).removeValue().addOnSuccessListener {
                                         deleteInvitationsForGame(gameId)
                                     }
-                                } else if (!stillAnyActive) {
-                                    Log.d(TAG, "Lösche Lobby - alle Spieler inaktiv: $gameId")
+                                } else if (!stillAnyOnline) {
+                                    Log.d(TAG, "Lösche Lobby - alle Spieler offline: $gameId")
                                     gamesRef.child(gameId).removeValue().addOnSuccessListener {
                                         deleteInvitationsForGame(gameId)
                                     }
@@ -1019,404 +1020,6 @@ class FirebaseManager {
             Log.e(TAG, "Fehler beim Cleanup alter Lobbys", e)
         }
     }
-
-    /**
-     * Lädt einen Freund in die Lobby ein
-     */
-    fun inviteFriendToLobby(
-        gameId: String,
-        lobbyName: String,
-        fromUserId: String,
-        fromUsername: String,
-        toUserId: String,
-        onSuccess: () -> Unit,
-        onError: (String) -> Unit
-    ) {
-        val invitationId = invitationsRef.push().key ?: run {
-            onError("Konnte keine Invitation-ID erstellen")
-            return
-        }
-
-        val invitation = hashMapOf(
-            "invitationId" to invitationId,
-            "gameId" to gameId,
-            "lobbyName" to lobbyName,
-            "fromUserId" to fromUserId,
-            "fromUsername" to fromUsername,
-            "toUserId" to toUserId,
-            "status" to "pending",
-            "timestamp" to ServerValue.TIMESTAMP
-        )
-
-        invitationsRef.child(toUserId).child(invitationId).setValue(invitation)
-            .addOnSuccessListener {
-                Log.d(TAG, "Friend invited to lobby: $fromUsername -> $toUserId for game $gameId")
-                onSuccess()
-            }
-            .addOnFailureListener { e ->
-                Log.e(TAG, "Error inviting friend to lobby", e)
-                onError("Fehler beim Einladen: ${e.message}")
-            }
-    }
-
-    // ==================== KICK FUNKTIONALITÄT ====================
-    fun kickPlayer(
-        gameId: String,
-        playerId: String,
-        onSuccess: () -> Unit,
-        onError: (String) -> Unit
-    ) {
-        // Prüfe ob der Spieler existiert
-        database.getReference("games").child(gameId).child("players").child(playerId)
-            .addListenerForSingleValueEvent(object : ValueEventListener {
-                override fun onDataChange(snapshot: DataSnapshot) {
-                    if (!snapshot.exists()) {
-                        onError("Spieler nicht gefunden")
-                        return
-                    }
-
-                    // Entferne den Spieler
-                    val updates = hashMapOf<String, Any?>(
-                        "games/$gameId/players/$playerId" to null,
-                        "playerPresence/$gameId/$playerId" to null
-                    )
-
-                    database.reference.updateChildren(updates)
-                        .addOnSuccessListener {
-                            // Setze kicked Flag für den Spieler
-                            database.getReference("games").child(gameId).child("kicked").child(playerId)
-                                .setValue(true)
-                            onSuccess()
-                        }
-                        .addOnFailureListener { onError(it.message ?: "Fehler beim Kicken") }
-                }
-
-                override fun onCancelled(error: DatabaseError) {
-                    onError("Fehler beim Prüfen des Spielers")
-                }
-            })
-    }
-
-    /**
-     * Prüft ob ein Spieler gekickt wurde
-     */
-    fun checkIfKicked(
-        gameId: String,
-        playerId: String,
-        onResult: (Boolean) -> Unit
-    ) {
-        database.getReference("games").child(gameId).child("kicked").child(playerId)
-            .addListenerForSingleValueEvent(object : ValueEventListener {
-                override fun onDataChange(snapshot: DataSnapshot) {
-                    val isKicked = snapshot.getValue(Boolean::class.java) ?: false
-                    onResult(isKicked)
-                }
-
-                override fun onCancelled(error: DatabaseError) {
-                    onResult(false)
-                }
-            })
-    }
-
-    /**
-     * Listener für Kicked-Status
-     */
-    fun listenForKick(
-        gameId: String,
-        playerId: String,
-        onKicked: () -> Unit
-    ) {
-        database.getReference("games").child(gameId).child("kicked").child(playerId)
-            .addValueEventListener(object : ValueEventListener {
-                override fun onDataChange(snapshot: DataSnapshot) {
-                    val isKicked = snapshot.getValue(Boolean::class.java) ?: false
-                    if (isKicked) {
-                        onKicked()
-                    }
-                }
-
-                override fun onCancelled(error: DatabaseError) {
-                    // Ignore
-                }
-            })
-    }
-
-    // ==================== FREUNDESLISTE ====================
-
-    /**
-     * Holt die Freundesliste eines Users
-     */
-    private val friendStatusListeners = mutableMapOf<String, Pair<DatabaseReference, ValueEventListener>>()
-
-    fun getFriends(userId: String, onResult: (List<com.example.worldshardestgame_multiplayer.models.Friend>) -> Unit) {
-        // Entferne alte Listener
-        clearFriendStatusListeners()
-
-        database.getReference("users").child(userId).child("friends")
-            .addValueEventListener(object : ValueEventListener {
-                override fun onDataChange(snapshot: DataSnapshot) {
-                    val friendsList = mutableListOf<com.example.worldshardestgame_multiplayer.models.Friend>()
-
-                    if (snapshot.childrenCount == 0L) {
-                        onResult(emptyList())
-                        return
-                    }
-
-                    // Erst alle Freunde aus dem Snapshot sammeln
-                    for (child in snapshot.children) {
-                        val friend = child.getValue(com.example.worldshardestgame_multiplayer.models.Friend::class.java)
-                        if (friend != null) {
-                            friendsList.add(friend)
-                        }
-                    }
-
-                    // Dann für jeden Freund einen Status-Listener setzen
-                    friendsList.forEach { friend ->
-                        val statusRef = database.getReference("users").child(friend.userId).child("status")
-                        val statusListener = object : ValueEventListener {
-                            override fun onDataChange(statusSnapshot: DataSnapshot) {
-                                val currentStatus = statusSnapshot.getValue(String::class.java) ?: "offline"
-                                Log.d(TAG, "Status-Update für ${friend.username}: $currentStatus")
-
-                                // Aktualisiere den Status in der Liste
-                                val index = friendsList.indexOfFirst { it.userId == friend.userId }
-                                if (index >= 0) {
-                                    friendsList[index] = friendsList[index].copy(status = currentStatus)
-                                    // Gebe die aktualisierte Liste zurück
-                                    onResult(friendsList.toList())
-                                }
-                            }
-
-                            override fun onCancelled(error: DatabaseError) {
-                                Log.e(TAG, "Fehler beim Abrufen des Status für ${friend.username}", error.toException())
-                            }
-                        }
-
-                        statusRef.addValueEventListener(statusListener)
-                        friendStatusListeners[friend.userId] = Pair(statusRef, statusListener)
-                    }
-
-                    // Gebe initial die Liste mit den vorhandenen Status zurück
-                    onResult(friendsList.toList())
-                }
-
-                override fun onCancelled(error: DatabaseError) {
-                    Log.e(TAG, "Fehler beim Laden der Freunde", error.toException())
-                    onResult(emptyList())
-                }
-            })
-    }
-
-    fun clearFriendStatusListeners() {
-        friendStatusListeners.forEach { (_, pair) ->
-            val (ref, listener) = pair
-            ref.removeEventListener(listener)
-        }
-        friendStatusListeners.clear()
-    }
-
-    /**
-     * Holt ausstehende Freundschaftsanfragen
-     */
-    fun getPendingFriendRequests(userId: String, onResult: (List<com.example.worldshardestgame_multiplayer.models.FriendRequest>) -> Unit) {
-        database.getReference("friendRequests")
-            .orderByChild("toUserId")
-            .equalTo(userId)
-            .addValueEventListener(object : ValueEventListener {
-                override fun onDataChange(snapshot: DataSnapshot) {
-                    val requests = mutableListOf<com.example.worldshardestgame_multiplayer.models.FriendRequest>()
-                    for (child in snapshot.children) {
-                        val request = child.getValue(com.example.worldshardestgame_multiplayer.models.FriendRequest::class.java)
-                        if (request != null && request.status == "pending") {
-                            requests.add(request)
-                        }
-                    }
-                    onResult(requests)
-                }
-
-                override fun onCancelled(error: DatabaseError) {
-                    Log.e(TAG, "Fehler beim Laden der Anfragen", error.toException())
-                    onResult(emptyList())
-                }
-            })
-    }
-
-    /**
-     * Sucht nach Users anhand des Usernamens
-     */
-    fun searchUsers(query: String, currentUserId: String, onResult: (List<com.example.worldshardestgame_multiplayer.models.User>) -> Unit) {
-        database.getReference("users")
-            .orderByChild("username")
-            .startAt(query)
-            .endAt(query + "\uf8ff")
-            .addListenerForSingleValueEvent(object : ValueEventListener {
-                override fun onDataChange(snapshot: DataSnapshot) {
-                    val users = mutableListOf<com.example.worldshardestgame_multiplayer.models.User>()
-                    for (child in snapshot.children) {
-                        val user = child.getValue(com.example.worldshardestgame_multiplayer.models.User::class.java)
-                        if (user != null && user.userId != currentUserId) {
-                            users.add(user)
-                        }
-                    }
-                    onResult(users)
-                }
-
-                override fun onCancelled(error: DatabaseError) {
-                    Log.e(TAG, "Fehler bei der Suche", error.toException())
-                    onResult(emptyList())
-                }
-            })
-    }
-
-    /**
-     * Sendet eine Freundschaftsanfrage
-     */
-    fun sendFriendRequest(
-        fromUserId: String,
-        fromUsername: String,
-        toUserId: String,
-        toUsername: String,
-        onSuccess: () -> Unit,
-        onError: (String) -> Unit
-    ) {
-        // Prüfe ob bereits eine Anfrage existiert
-        database.getReference("friendRequests")
-            .orderByChild("fromUserId")
-            .equalTo(fromUserId)
-            .addListenerForSingleValueEvent(object : ValueEventListener {
-                override fun onDataChange(snapshot: DataSnapshot) {
-                    var alreadyExists = false
-                    for (child in snapshot.children) {
-                        val request = child.getValue(com.example.worldshardestgame_multiplayer.models.FriendRequest::class.java)
-                        if (request != null && request.toUserId == toUserId && request.status == "pending") {
-                            alreadyExists = true
-                            break
-                        }
-                    }
-
-                    if (alreadyExists) {
-                        onError("Anfrage bereits gesendet")
-                        return
-                    }
-
-                    // Erstelle neue Anfrage
-                    val requestId = database.getReference("friendRequests").push().key
-                    if (requestId == null) {
-                        onError("Fehler beim Erstellen der Anfrage")
-                        return
-                    }
-
-                    val request = com.example.worldshardestgame_multiplayer.models.FriendRequest(
-                        requestId = requestId,
-                        fromUserId = fromUserId,
-                        fromUsername = fromUsername,
-                        toUserId = toUserId,
-                        toUsername = toUsername,
-                        status = "pending",
-                        timestamp = System.currentTimeMillis()
-                    )
-
-                    database.getReference("friendRequests").child(requestId).setValue(request)
-                        .addOnSuccessListener { onSuccess() }
-                        .addOnFailureListener { onError(it.message ?: "Unbekannter Fehler") }
-                }
-
-                override fun onCancelled(error: DatabaseError) {
-                    onError("Fehler beim Prüfen bestehender Anfragen")
-                }
-            })
-    }
-
-    /**
-     * Akzeptiert eine Freundschaftsanfrage
-     */
-    fun acceptFriendRequest(
-        requestId: String,
-        fromUserId: String,
-        fromUsername: String,
-        toUserId: String,
-        toUsername: String,
-        onSuccess: () -> Unit,
-        onError: (String) -> Unit
-    ) {
-        // Hole aktuelle Status beider Benutzer
-        val fromUserStatusRef = database.getReference("users").child(fromUserId).child("status")
-        val toUserStatusRef = database.getReference("users").child(toUserId).child("status")
-
-        fromUserStatusRef.get().addOnSuccessListener { fromStatusSnapshot ->
-            val fromUserStatus = fromStatusSnapshot.getValue(String::class.java) ?: "offline"
-
-            toUserStatusRef.get().addOnSuccessListener { toStatusSnapshot ->
-                val toUserStatus = toStatusSnapshot.getValue(String::class.java) ?: "offline"
-
-                val updates = hashMapOf<String, Any>(
-                    // Markiere Anfrage als akzeptiert
-                    "friendRequests/$requestId/status" to "accepted",
-
-                    // Füge beide User als Freunde hinzu mit aktuellem Status
-                    "users/$fromUserId/friends/$toUserId" to hashMapOf(
-                        "userId" to toUserId,
-                        "username" to toUsername,
-                        "status" to toUserStatus,
-                        "addedAt" to System.currentTimeMillis()
-                    ),
-                    "users/$toUserId/friends/$fromUserId" to hashMapOf(
-                        "userId" to fromUserId,
-                        "username" to fromUsername,
-                        "status" to fromUserStatus,
-                        "addedAt" to System.currentTimeMillis()
-                    )
-                )
-
-                database.reference.updateChildren(updates)
-                    .addOnSuccessListener { onSuccess() }
-                    .addOnFailureListener { onError(it.message ?: "Unbekannter Fehler") }
-            }.addOnFailureListener { onError(it.message ?: "Fehler beim Abrufen des Status") }
-        }.addOnFailureListener { onError(it.message ?: "Fehler beim Abrufen des Status") }
-    }
-
-    /**
-     * Lehnt eine Freundschaftsanfrage ab
-     */
-    fun rejectFriendRequest(
-        requestId: String,
-        onSuccess: () -> Unit,
-        onError: (String) -> Unit
-    ) {
-        database.getReference("friendRequests").child(requestId).child("status").setValue("rejected")
-            .addOnSuccessListener { onSuccess() }
-            .addOnFailureListener { onError(it.message ?: "Unbekannter Fehler") }
-    }
-
-    /**
-     * Entfernt einen Freund
-     */
-    fun removeFriend(
-        userId: String,
-        friendId: String,
-        onSuccess: () -> Unit,
-        onError: (String) -> Unit
-    ) {
-        val updates = hashMapOf<String, Any?>(
-            "users/$userId/friends/$friendId" to null,
-            "users/$friendId/friends/$userId" to null
-        )
-
-        database.reference.updateChildren(updates)
-            .addOnSuccessListener { onSuccess() }
-            .addOnFailureListener { onError(it.message ?: "Unbekannter Fehler") }
-    }
-
-    /**
-     * Setzt den Online-Status eines Users
-     */
-    fun setUserStatus(userId: String, status: String) {
-        database.getReference("users").child(userId).child("status").setValue(status)
-    }
-
-    /**
-     * Setzt User auf Online
-     */
 }
 
 // Data Classes
@@ -1453,3 +1056,520 @@ data class GameLobbyInfo(
     val currentPlayers: Int,
     val maxPlayers: Int
 )
+
+    // ==================== FREUNDESLISTE ====================
+
+    /**
+     * Sendet eine Freundschaftsanfrage an einen Benutzer
+     */
+    fun sendFriendRequest(
+        fromUserId: String,
+        fromUsername: String,
+        toUserId: String,
+        toUsername: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val requestId = database.child("friendRequests").push().key ?: run {
+            onError("Konnte keine Request-ID erstellen")
+            return
+        }
+
+        val friendRequest = hashMapOf(
+            "requestId" to requestId,
+            "fromUserId" to fromUserId,
+            "fromUsername" to fromUsername,
+            "toUserId" to toUserId,
+            "toUsername" to toUsername,
+            "status" to "pending",
+            "timestamp" to System.currentTimeMillis()
+        )
+
+        database.child("friendRequests").child(requestId).setValue(friendRequest)
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { onError(it.message ?: "Fehler beim Senden") }
+    }
+
+    /**
+     * Holt alle ausstehenden Freundschaftsanfragen für einen Benutzer
+     */
+    fun getPendingFriendRequests(
+        userId: String,
+        onResult: (List<com.example.worldshardestgame_multiplayer.models.FriendRequest>) -> Unit
+    ) {
+        database.child("friendRequests")
+            .orderByChild("toUserId")
+            .equalTo(userId)
+            .addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val requests = mutableListOf<com.example.worldshardestgame_multiplayer.models.FriendRequest>()
+                    for (child in snapshot.children) {
+                        val status = child.child("status").getValue(String::class.java) ?: "pending"
+                        if (status == "pending") {
+                            child.getValue(com.example.worldshardestgame_multiplayer.models.FriendRequest::class.java)?.let {
+                                requests.add(it)
+                            }
+                        }
+                    }
+                    onResult(requests)
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    onResult(emptyList())
+                }
+            })
+    }
+
+    /**
+     * Akzeptiert eine Freundschaftsanfrage
+     */
+    fun acceptFriendRequest(
+        requestId: String,
+        fromUserId: String,
+        fromUsername: String,
+        toUserId: String,
+        toUsername: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        // Update Request Status
+        database.child("friendRequests").child(requestId).child("status").setValue("accepted")
+
+        // Füge beide Benutzer zur Freundesliste hinzu
+        val friend1 = hashMapOf(
+            "userId" to fromUserId,
+            "username" to fromUsername,
+            "status" to "offline",
+            "addedAt" to System.currentTimeMillis()
+        )
+
+        val friend2 = hashMapOf(
+            "userId" to toUserId,
+            "username" to toUsername,
+            "status" to "offline",
+            "addedAt" to System.currentTimeMillis()
+        )
+
+        val updates = hashMapOf<String, Any>(
+            "friends/$toUserId/$fromUserId" to friend1,
+            "friends/$fromUserId/$toUserId" to friend2
+        )
+
+        database.updateChildren(updates)
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { onError(it.message ?: "Fehler beim Akzeptieren") }
+    }
+
+    /**
+     * Lehnt eine Freundschaftsanfrage ab
+     */
+    fun rejectFriendRequest(
+        requestId: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        database.child("friendRequests").child(requestId).child("status").setValue("rejected")
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { onError(it.message ?: "Fehler beim Ablehnen") }
+    }
+
+    /**
+     * Holt die Freundesliste eines Benutzers
+     */
+    fun getFriends(
+        userId: String,
+        onResult: (List<com.example.worldshardestgame_multiplayer.models.Friend>) -> Unit
+    ) {
+        database.child("friends").child(userId)
+            .addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val friends = mutableListOf<com.example.worldshardestgame_multiplayer.models.Friend>()
+                    for (child in snapshot.children) {
+                        child.getValue(com.example.worldshardestgame_multiplayer.models.Friend::class.java)?.let {
+                            friends.add(it)
+                        }
+                    }
+                    onResult(friends)
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    onResult(emptyList())
+                }
+            })
+    }
+
+    /**
+     * Entfernt einen Freund aus der Freundesliste
+     */
+    fun removeFriend(
+        userId: String,
+        friendId: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val updates = hashMapOf<String, Any?>(
+            "friends/$userId/$friendId" to null,
+            "friends/$friendId/$userId" to null
+        )
+
+        database.updateChildren(updates)
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { onError(it.message ?: "Fehler beim Entfernen") }
+    }
+
+    /**
+     * Sucht nach Benutzern anhand des Usernamens
+     */
+    fun searchUsers(
+        searchQuery: String,
+        currentUserId: String,
+        onResult: (List<com.example.worldshardestgame_multiplayer.models.User>) -> Unit
+    ) {
+        database.child("users")
+            .orderByChild("username")
+            .startAt(searchQuery)
+            .endAt(searchQuery + "\uf8ff")
+            .addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val users = mutableListOf<com.example.worldshardestgame_multiplayer.models.User>()
+                    for (child in snapshot.children) {
+                        child.getValue(com.example.worldshardestgame_multiplayer.models.User::class.java)?.let { user ->
+                            if (user.userId != currentUserId) {
+                                users.add(user)
+                            }
+                        }
+                    }
+                    onResult(users)
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    onResult(emptyList())
+                }
+            })
+    }
+
+    /**
+     * Lädt einen Freund in die Lobby ein
+     */
+    fun inviteFriendToLobby(
+        gameId: String,
+        lobbyName: String,
+        fromUserId: String,
+        fromUsername: String,
+        toUserId: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val invitationId = database.child("invitations").push().key ?: run {
+            onError("Konnte keine Invitation-ID erstellen")
+            return
+        }
+
+        val invitation = hashMapOf(
+            "invitationId" to invitationId,
+            "gameId" to gameId,
+            "lobbyName" to lobbyName,
+            "fromUserId" to fromUserId,
+            "fromUsername" to fromUsername,
+            "toUserId" to toUserId,
+            "status" to "pending",
+            "timestamp" to System.currentTimeMillis()
+        )
+
+        database.child("invitations").child(invitationId).setValue(invitation)
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { onError(it.message ?: "Fehler beim Einladen") }
+    }
+
+    // ==================== KICK FUNKTIONALITÄT ====================
+
+    /**
+     * Kickt einen Spieler aus der Lobby (nur vom Host aufrufbar)
+     */
+    fun kickPlayer(
+        gameId: String,
+        playerId: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        // Prüfe ob der Spieler existiert
+        database.child("games").child(gameId).child("players").child(playerId)
+            .addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    if (!snapshot.exists()) {
+                        onError("Spieler nicht gefunden")
+                        return
+                    }
+
+                    // Entferne den Spieler
+                    val updates = hashMapOf<String, Any?>(
+                        "games/$gameId/players/$playerId" to null,
+                        "playerPresence/$gameId/$playerId" to null
+                    )
+
+                    database.updateChildren(updates)
+                        .addOnSuccessListener {
+                            // Setze kicked Flag für den Spieler
+                            database.child("games").child(gameId).child("kicked").child(playerId)
+                                .setValue(true)
+                            onSuccess()
+                        }
+                        .addOnFailureListener { onError(it.message ?: "Fehler beim Kicken") }
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    onError("Fehler beim Prüfen des Spielers")
+                }
+            })
+    }
+
+    /**
+     * Prüft ob ein Spieler gekickt wurde
+     */
+    fun checkIfKicked(
+        gameId: String,
+        playerId: String,
+        onResult: (Boolean) -> Unit
+    ) {
+        database.child("games").child(gameId).child("kicked").child(playerId)
+            .addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val isKicked = snapshot.getValue(Boolean::class.java) ?: false
+                    onResult(isKicked)
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    onResult(false)
+                }
+            })
+    }
+
+    /**
+     * Listener für Kicked-Status
+     */
+    fun listenForKick(
+        gameId: String,
+        playerId: String,
+        onKicked: () -> Unit
+    ) {
+        database.child("games").child(gameId).child("kicked").child(playerId)
+            .addValueEventListener(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val isKicked = snapshot.getValue(Boolean::class.java) ?: false
+                    if (isKicked) {
+                        onKicked()
+                    }
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    // Ignore
+                }
+            })
+    }
+
+    // ==================== FREUNDESLISTE ====================
+
+    /**
+     * Holt die Freundesliste eines Users
+     */
+    fun getFriends(userId: String, onResult: (List<com.example.worldshardestgame_multiplayer.models.Friend>) -> Unit) {
+        database.child("users").child(userId).child("friends")
+            .addValueEventListener(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val friends = mutableListOf<com.example.worldshardestgame_multiplayer.models.Friend>()
+                    for (child in snapshot.children) {
+                        val friend = child.getValue(com.example.worldshardestgame_multiplayer.models.Friend::class.java)
+                        if (friend != null) {
+                            friends.add(friend)
+                        }
+                    }
+                    onResult(friends)
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    Log.e(TAG, "Fehler beim Laden der Freunde", error.toException())
+                    onResult(emptyList())
+                }
+            })
+    }
+
+    /**
+     * Holt ausstehende Freundschaftsanfragen
+     */
+    fun getPendingFriendRequests(userId: String, onResult: (List<com.example.worldshardestgame_multiplayer.models.FriendRequest>) -> Unit) {
+        database.child("friendRequests")
+            .orderByChild("toUserId")
+            .equalTo(userId)
+            .addValueEventListener(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val requests = mutableListOf<com.example.worldshardestgame_multiplayer.models.FriendRequest>()
+                    for (child in snapshot.children) {
+                        val request = child.getValue(com.example.worldshardestgame_multiplayer.models.FriendRequest::class.java)
+                        if (request != null && request.status == "pending") {
+                            requests.add(request)
+                        }
+                    }
+                    onResult(requests)
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    Log.e(TAG, "Fehler beim Laden der Anfragen", error.toException())
+                    onResult(emptyList())
+                }
+            })
+    }
+
+    /**
+     * Sucht nach Users anhand des Usernamens
+     */
+    fun searchUsers(query: String, currentUserId: String, onResult: (List<com.example.worldshardestgame_multiplayer.models.User>) -> Unit) {
+        database.child("users")
+            .orderByChild("username")
+            .startAt(query)
+            .endAt(query + "\uf8ff")
+            .addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val users = mutableListOf<com.example.worldshardestgame_multiplayer.models.User>()
+                    for (child in snapshot.children) {
+                        val user = child.getValue(com.example.worldshardestgame_multiplayer.models.User::class.java)
+                        if (user != null && user.userId != currentUserId) {
+                            users.add(user)
+                        }
+                    }
+                    onResult(users)
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    Log.e(TAG, "Fehler bei der Suche", error.toException())
+                    onResult(emptyList())
+                }
+            })
+    }
+
+    /**
+     * Sendet eine Freundschaftsanfrage
+     */
+    fun sendFriendRequest(
+        fromUserId: String,
+        fromUsername: String,
+        toUserId: String,
+        toUsername: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        // Prüfe ob bereits eine Anfrage existiert
+        database.child("friendRequests")
+            .orderByChild("fromUserId")
+            .equalTo(fromUserId)
+            .addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    var alreadyExists = false
+                    for (child in snapshot.children) {
+                        val request = child.getValue(com.example.worldshardestgame_multiplayer.models.FriendRequest::class.java)
+                        if (request != null && request.toUserId == toUserId && request.status == "pending") {
+                            alreadyExists = true
+                            break
+                        }
+                    }
+
+                    if (alreadyExists) {
+                        onError("Anfrage bereits gesendet")
+                        return
+                    }
+
+                    // Erstelle neue Anfrage
+                    val requestId = database.child("friendRequests").push().key
+                    if (requestId == null) {
+                        onError("Fehler beim Erstellen der Anfrage")
+                        return
+                    }
+
+                    val request = com.example.worldshardestgame_multiplayer.models.FriendRequest(
+                        requestId = requestId,
+                        fromUserId = fromUserId,
+                        fromUsername = fromUsername,
+                        toUserId = toUserId,
+                        toUsername = toUsername,
+                        status = "pending",
+                        timestamp = System.currentTimeMillis()
+                    )
+
+                    database.child("friendRequests").child(requestId).setValue(request)
+                        .addOnSuccessListener { onSuccess() }
+                        .addOnFailureListener { onError(it.message ?: "Unbekannter Fehler") }
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    onError("Fehler beim Prüfen bestehender Anfragen")
+                }
+            })
+    }
+
+    /**
+     * Akzeptiert eine Freundschaftsanfrage
+     */
+    fun acceptFriendRequest(
+        requestId: String,
+        fromUserId: String,
+        fromUsername: String,
+        toUserId: String,
+        toUsername: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val updates = hashMapOf<String, Any>(
+            // Markiere Anfrage als akzeptiert
+            "friendRequests/$requestId/status" to "accepted",
+
+            // Füge beide User als Freunde hinzu
+            "users/$fromUserId/friends/$toUserId" to com.example.worldshardestgame_multiplayer.models.Friend(
+                userId = toUserId,
+                username = toUsername,
+                status = "offline",
+                addedAt = System.currentTimeMillis()
+            ),
+            "users/$toUserId/friends/$fromUserId" to com.example.worldshardestgame_multiplayer.models.Friend(
+                userId = fromUserId,
+                username = fromUsername,
+                status = "offline",
+                addedAt = System.currentTimeMillis()
+            )
+        )
+
+        database.updateChildren(updates)
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { onError(it.message ?: "Unbekannter Fehler") }
+    }
+
+    /**
+     * Lehnt eine Freundschaftsanfrage ab
+     */
+    fun rejectFriendRequest(
+        requestId: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        database.child("friendRequests").child(requestId).child("status").setValue("rejected")
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { onError(it.message ?: "Unbekannter Fehler") }
+    }
+
+    /**
+     * Entfernt einen Freund
+     */
+    fun removeFriend(
+        userId: String,
+        friendId: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val updates = hashMapOf<String, Any?>(
+            "users/$userId/friends/$friendId" to null,
+            "users/$friendId/friends/$userId" to null
+        )
+
+        database.updateChildren(updates)
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { onError(it.message ?: "Unbekannter Fehler") }
+    }
+

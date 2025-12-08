@@ -13,6 +13,7 @@ class LobbyActivity : AppCompatActivity() {
     private lateinit var firebaseManager: FirebaseManager
     private lateinit var btnCreateGame: Button
     private lateinit var btnJoinGame: Button
+    private lateinit var btnFriends: Button
     private lateinit var etPlayerName: EditText
     private lateinit var etLobbyName: EditText
 
@@ -26,6 +27,7 @@ class LobbyActivity : AppCompatActivity() {
         etLobbyName = findViewById(R.id.etLobbyName)
         btnCreateGame = findViewById(R.id.btnCreateGame)
         btnJoinGame = findViewById(R.id.btnJoinGame)
+        btnFriends = findViewById(R.id.btnFriends)
 
         btnCreateGame.setOnClickListener {
             createGame()
@@ -33,6 +35,10 @@ class LobbyActivity : AppCompatActivity() {
 
         btnJoinGame.setOnClickListener {
             showJoinGameDialog()
+        }
+
+        btnFriends.setOnClickListener {
+            openFriendsActivity()
         }
 
         // Beim Start automatisch leere Lobbys aufräumen
@@ -153,6 +159,11 @@ class LobbyActivity : AppCompatActivity() {
         }
         startActivity(intent)
         finish()
+    }
+
+    private fun openFriendsActivity() {
+        val intent = Intent(this, FriendsActivity::class.java)
+        startActivity(intent)
     }
 }
 

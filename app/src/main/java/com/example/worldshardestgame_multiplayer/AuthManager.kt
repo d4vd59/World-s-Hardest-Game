@@ -85,17 +85,31 @@ class AuthManager {
                     val salt = generateSalt()
                     val passwordHash = hashPassword(password, salt)
 
+                    val createdAt = System.currentTimeMillis()
+
                     val user = User(
                         userId = userId,
                         username = username,
                         passwordHash = passwordHash,
                         salt = salt,
-                        createdAt = System.currentTimeMillis(),
+                        createdAt = createdAt,
                         gamesPlayed = 0,
                         gamesWon = 0
                     )
 
-                    usersRef.child(userId).setValue(user)
+                    // Erstelle User-Daten mit initialem Status
+                    val userData = hashMapOf<String, Any>(
+                        "userId" to userId,
+                        "username" to username,
+                        "passwordHash" to passwordHash,
+                        "salt" to salt,
+                        "createdAt" to createdAt,
+                        "gamesPlayed" to 0,
+                        "gamesWon" to 0,
+                        "status" to "offline"
+                    )
+
+                    usersRef.child(userId).setValue(userData)
                         .addOnSuccessListener {
                             Log.d(TAG, "User created: $username")
                             currentUser = user

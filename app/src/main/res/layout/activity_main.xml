@@ -125,6 +125,24 @@
             android:text="Bereit"
             android:layout_marginTop="8dp"
             android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/tvPlayersTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Spieler in Lobby:"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginTop="8dp"
+            android:visibility="gone" />
+
+        <ListView
+            android:id="@+id/lvLobbyPlayers"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:divider="@android:color/darker_gray"
+            android:dividerHeight="1dp"
+            android:visibility="gone" />
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

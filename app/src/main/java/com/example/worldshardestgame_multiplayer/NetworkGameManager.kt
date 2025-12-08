@@ -160,5 +160,10 @@ class NetworkGameManager(
             }
         }
     }
+
+    // Prüft ob der aktuelle Spieler der Host ist
+    fun isHost(): Boolean {
+        return gameStateData?.hostId == playerId
+    }
 }
 

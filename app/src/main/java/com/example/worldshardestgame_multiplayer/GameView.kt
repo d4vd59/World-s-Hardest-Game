@@ -79,6 +79,7 @@ class GameView @JvmOverloads constructor(
     val isGameRunning: Boolean get() = _isGameRunning
     private var levelStartTime = 0L
     private var collectedCoins = 0
+    private var levelCompletionTriggered = false
 
     // Möglichkeit, später die Geschwindigkeit anzupassen
     @Suppress("unused")
@@ -216,6 +217,7 @@ class GameView @JvmOverloads constructor(
 
     fun startLevel() {
         _isGameRunning = true
+        levelCompletionTriggered = false
         levelStartTime = System.currentTimeMillis()
         initLevel()
         requestFocus()
@@ -400,12 +402,15 @@ class GameView @JvmOverloads constructor(
             if (!coin.collected && rectIntersectsCircle(playerRect, coin.x, coin.y, coin.radius)) {
                 coin.collected = true
                 collectedCoins++
-                Log.d("GameView", "Coin collected! Total collected: $collectedCoins / ${coins.size}")
+                Log.d("GameView", "Coin collected! Total: $collectedCoins / ${coins.size}, All collected: ${coins.all { it.collected }}")
             }
         }
     }
 
     private fun checkLevelCompletion() {
+        // Wenn Level-Abschluss bereits getriggert wurde, nicht nochmal prüfen
+        if (levelCompletionTriggered) return
+
         val allCoinsCollected = coins.all { it.collected }
 
         // Spieler-Rechteck erstellen
@@ -419,15 +424,20 @@ class GameView @JvmOverloads constructor(
         // Prüfen ob Spieler-Rechteck die Endzone überlappt
         val inEndZone = RectF.intersects(playerRect, endZone)
 
-        Log.d("GameView", "Level completion check: allCoinsCollected=$allCoinsCollected, inEndZone=$inEndZone")
+        // Debug-Logging
+        if (allCoinsCollected) {
+            Log.d("GameView", "All coins collected! inEndZone=$inEndZone, isGameRunning=$_isGameRunning, coins.size=${coins.size}")
+        }
 
-        if (allCoinsCollected && inEndZone) {
-            if (_isGameRunning) {  // Nur wenn Spiel noch läuft
-                _isGameRunning = false
-                // Callback auf UI-Thread ausführen um Race Conditions zu vermeiden
-                post {
-                    onLevelCompleted?.invoke()
-                }
+        if (allCoinsCollected && inEndZone && _isGameRunning) {
+            Log.d("GameView", "LEVEL COMPLETE! Coins: $collectedCoins/${coins.size}, inEndZone=$inEndZone, isGameRunning=$_isGameRunning")
+            levelCompletionTriggered = true
+            _isGameRunning = false
+            Log.d("GameView", "Calling onLevelCompleted callback...")
+            // Callback auf UI-Thread ausführen um Race Conditions zu vermeiden
+            post {
+                Log.d("GameView", "onLevelCompleted?.invoke() - callback: ${onLevelCompleted != null}")
+                onLevelCompleted?.invoke()
             }
         }
     }

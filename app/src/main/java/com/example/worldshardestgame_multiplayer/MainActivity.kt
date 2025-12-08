@@ -2,13 +2,14 @@ package com.example.worldshardestgame_multiplayer
 
 import android.os.Bundle
 import android.os.CountDownTimer
-import android.widget.TextView
+import android.util.Log
+import android.view.View
+import android.view.ViewGroup
+import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import android.widget.Button
-import android.widget.Toast
 
 class MainActivity : AppCompatActivity() {
 
@@ -19,6 +20,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var timerText: TextView
     private lateinit var statsText: TextView
     private lateinit var btnReady: Button
+    private lateinit var tvPlayersTitle: TextView
+    private lateinit var lvLobbyPlayers: ListView
 
     private var gameId: String = ""
     private var playerId: String = ""
@@ -27,6 +30,8 @@ class MainActivity : AppCompatActivity() {
     private var lastPositionUpdate = 0L
     private var levelStartTime = 0L
     private var presenceTimer: CountDownTimer? = null
+    private val lobbyPlayers = mutableListOf<PlayerInLobby>()
+    private var lobbyPlayersAdapter: LobbyPlayersAdapter? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,6 +62,8 @@ class MainActivity : AppCompatActivity() {
         timerText = findViewById(R.id.timerText)
         statsText = findViewById(R.id.statsText)
         btnReady = findViewById(R.id.btnReady)
+        tvPlayersTitle = findViewById(R.id.tvPlayersTitle)
+        lvLobbyPlayers = findViewById(R.id.lvLobbyPlayers)
 
         playerNameText.text = playerName
 
@@ -75,8 +82,32 @@ class MainActivity : AppCompatActivity() {
         // Starte Presence Heartbeat (alle 10 Sekunden)
         startPresenceHeartbeat()
 
+        // Listener für Kicked-Status
+        setupKickListener()
+
         // Lobby-Modus
         showLobbyScreen()
+    }
+
+    override fun onResume() {
+        super.onResume()
+    }
+
+    override fun onPause() {
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Cleanup
+        countDownTimer?.cancel()
+        presenceTimer?.cancel()
+        networkGameManager.leaveGame()
+
+        // Wenn der Host die App verlässt, lösche alle Einladungen für diese Lobby
+        if (playerId == "player_1") {
+            firebaseManager.deleteInvitationsForGame(gameId)
+        }
     }
 
     private fun setupDPad() {
@@ -103,6 +134,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupGameCallbacks() {
         gameView.onLevelCompleted = {
+            Log.d("MainActivity", "onLevelCompleted callback triggered!")
             val elapsedTime = System.currentTimeMillis() - levelStartTime
             networkGameManager.onLevelCompleted(elapsedTime)
 
@@ -112,6 +144,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         gameView.onPlayerDied = {
+            Log.d("MainActivity", "onPlayerDied callback triggered!")
             networkGameManager.onPlayerDied()
 
             // Stoppe Level erstmal komplett
@@ -157,10 +190,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showLobbyScreen() {
-        btnReady.visibility = Button.VISIBLE
+        btnReady.visibility = View.VISIBLE
+        tvPlayersTitle.visibility = View.VISIBLE
+        lvLobbyPlayers.visibility = View.VISIBLE
         playerNameText.text = "$playerName in Lobby"
         timerText.text = "Bereit?"
         statsText.text = "Warte auf weitere Spieler..."
+
+        // Setup Adapter für Lobby-Spieler
+        setupLobbyPlayersAdapter()
+    }
+
+    private fun setupLobbyPlayersAdapter() {
+        lobbyPlayersAdapter = LobbyPlayersAdapter()
+        lvLobbyPlayers.adapter = lobbyPlayersAdapter
     }
 
     private fun updateGameState(gameState: GameStateData) {
@@ -170,12 +213,17 @@ class MainActivity : AppCompatActivity() {
                 val playerCount = gameState.players.size
                 statsText.text = "Spieler in Lobby: $playerCount | bereit: $readyCount"
 
+                // Aktualisiere Lobby-Spieler Liste
+                updateLobbyPlayersList(gameState)
+
                 if (networkGameManager.allPlayersReady() && playerId == gameState.hostId) {
                     networkGameManager.startGame()
                 }
             }
             "playing" -> {
-                btnReady.visibility = Button.GONE
+                btnReady.visibility = View.GONE
+                tvPlayersTitle.visibility = View.GONE
+                lvLobbyPlayers.visibility = View.GONE
 
                 // Alle spielen gleichzeitig - zeige eigene Stats
                 val myPlayer = gameState.players.find { it.playerId == playerId }
@@ -244,10 +292,35 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun showKickedDialog() {
+        countDownTimer?.cancel()
+        gameView.stopLevel()
+
+        AlertDialog.Builder(this)
+            .setTitle("Aus der Lobby gekickt")
+            .setMessage("Du wurdest vom Host aus der Lobby entfernt.")
+            .setPositiveButton("OK") { _, _ ->
+                finish()
+            }
+            .setCancelable(false)
+            .show()
+    }
+
     private fun formatTime(millis: Long): String {
         val seconds = (millis / 1000) % 60
         val minutes = (millis / 1000) / 60
         return String.format("%02d:%02d", minutes, seconds)
+    }
+
+    /**
+     * Richtet den Listener ein, der prüft ob der Spieler gekickt wurde
+     */
+    private fun setupKickListener() {
+        firebaseManager.listenForKick(gameId, playerId) {
+            runOnUiThread {
+                showKickedDialog()
+            }
+        }
     }
 
     /**
@@ -265,31 +338,6 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    override fun onPause() {
-        super.onPause()
-        // Markiere Spieler als offline wenn App in den Hintergrund geht
-        firebaseManager.gamesRef.child(gameId).child("players").child(playerId)
-            .child("online").setValue(false)
-    }
-
-    override fun onResume() {
-        super.onResume()
-        // Markiere Spieler als online wenn App wieder aktiv wird
-        firebaseManager.gamesRef.child(gameId).child("players").child(playerId)
-            .child("online").setValue(true)
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        countDownTimer?.cancel()
-        presenceTimer?.cancel()
-        networkGameManager.leaveGame()
-
-        // Wenn der Host die App verlässt, lösche alle Einladungen für diese Lobby
-        if (playerId == "player_1") {
-            firebaseManager.deleteInvitationsForGame(gameId)
-        }
-    }
 
     override fun onBackPressed() {
         // Zeige Bestätigungs-Dialog beim Verlassen
@@ -301,6 +349,97 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("Nein", null)
             .show()
+    }
+
+    /**
+     * Aktualisiert die Lobby-Spieler Liste
+     */
+    private fun updateLobbyPlayersList(gameState: GameStateData) {
+        lobbyPlayers.clear()
+        gameState.players.forEach { player ->
+            lobbyPlayers.add(PlayerInLobby(
+                playerId = player.playerId,
+                name = player.name,
+                isReady = player.isReady,
+                isHost = player.playerId == gameState.hostId
+            ))
+        }
+        lobbyPlayersAdapter?.notifyDataSetChanged()
+    }
+
+    /**
+     * Kickt einen Spieler aus der Lobby
+     */
+    private fun kickPlayer(kickedPlayerId: String, playerName: String) {
+        AlertDialog.Builder(this)
+            .setTitle("Spieler kicken?")
+            .setMessage("Möchtest du $playerName wirklich aus der Lobby kicken?")
+            .setPositiveButton("Ja") { _, _ ->
+                firebaseManager.kickPlayer(
+                    gameId = gameId,
+                    playerId = kickedPlayerId,
+                    onSuccess = {
+                        runOnUiThread {
+                            Toast.makeText(this, "$playerName wurde gekickt", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onError = { error: String ->
+                        runOnUiThread {
+                            Toast.makeText(this, "Fehler: $error", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            }
+            .setNegativeButton("Nein", null)
+            .show()
+    }
+
+    // ==================== DATA CLASSES ====================
+
+    data class PlayerInLobby(
+        val playerId: String,
+        val name: String,
+        val isReady: Boolean,
+        val isHost: Boolean
+    )
+
+    // ==================== ADAPTER ====================
+
+    inner class LobbyPlayersAdapter : BaseAdapter() {
+        override fun getCount() = lobbyPlayers.size
+        override fun getItem(position: Int) = lobbyPlayers[position]
+        override fun getItemId(position: Int) = position.toLong()
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val view = convertView ?: layoutInflater.inflate(android.R.layout.simple_list_item_2, parent, false)
+            val player = lobbyPlayers[position]
+
+            val text1 = view.findViewById<TextView>(android.R.id.text1)
+            val text2 = view.findViewById<TextView>(android.R.id.text2)
+
+            // Anzeige: Name + Host/Bereit Status
+            val hostTag = if (player.isHost) " 👑" else ""
+            val readyTag = if (player.isReady) " ✓" else ""
+            text1.text = "${player.name}$hostTag$readyTag"
+
+            // Kick-Button nur für Host und nicht für sich selbst
+            val isMyself = player.playerId == playerId
+            val amIHost = networkGameManager.isHost()
+
+            if (amIHost && !isMyself) {
+                text2.text = "❌ Tippen zum Kicken"
+                text2.setTextColor(android.graphics.Color.RED)
+                view.setOnClickListener {
+                    kickPlayer(player.playerId, player.name)
+                }
+            } else {
+                text2.text = if (player.isReady) "Bereit" else "Wartet..."
+                text2.setTextColor(if (player.isReady) android.graphics.Color.GREEN else android.graphics.Color.GRAY)
+                view.setOnClickListener(null)
+            }
+
+            return view
+        }
     }
 
 }

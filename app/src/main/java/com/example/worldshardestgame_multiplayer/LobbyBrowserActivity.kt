@@ -18,6 +18,7 @@ class LobbyBrowserActivity : AppCompatActivity() {
 
     private lateinit var tvWelcome: TextView
     private lateinit var btnCreateLobby: Button
+    private lateinit var btnFriends: Button
     private lateinit var btnLogout: Button
     private lateinit var btnRefresh: Button
     private lateinit var rvLobbies: RecyclerView
@@ -53,9 +54,19 @@ class LobbyBrowserActivity : AppCompatActivity() {
         setupInvitationListener()
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        // Listener aufräumen
+        lobbiesListener?.let {
+            firebaseManager.gamesRef.removeEventListener(it)
+        }
+        currentInvitationDialog?.dismiss()
+    }
+
     private fun initializeViews() {
         tvWelcome = findViewById(R.id.tvWelcome)
         btnCreateLobby = findViewById(R.id.btnCreateLobby)
+        btnFriends = findViewById(R.id.btnFriends)
         btnLogout = findViewById(R.id.btnLogout)
         btnRefresh = findViewById(R.id.btnRefresh)
         rvLobbies = findViewById(R.id.rvLobbies)
@@ -80,6 +91,11 @@ class LobbyBrowserActivity : AppCompatActivity() {
     private fun setupListeners() {
         btnCreateLobby.setOnClickListener {
             showCreateLobbyDialog()
+        }
+
+        btnFriends.setOnClickListener {
+            val intent = Intent(this, FriendsActivity::class.java)
+            startActivity(intent)
         }
 
         btnLogout.setOnClickListener {
@@ -477,13 +493,6 @@ class LobbyBrowserActivity : AppCompatActivity() {
         )
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        lobbiesListener?.let {
-            firebaseManager.gamesRef.removeEventListener(it)
-        }
-        currentInvitationDialog?.dismiss()
-    }
 }
 
 // Adapter für Lobby-Liste

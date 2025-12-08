@@ -32,6 +32,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".FriendsActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".MainActivity"
             android:exported="false" />
     </application>
