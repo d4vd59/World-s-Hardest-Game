@@ -26,6 +26,7 @@ class MainActivity : AppCompatActivity() {
     private var countDownTimer: CountDownTimer? = null
     private var lastPositionUpdate = 0L
     private var levelStartTime = 0L
+    private var presenceTimer: CountDownTimer? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,6 +71,9 @@ class MainActivity : AppCompatActivity() {
         setupGameCallbacks()
         setupNetworkCallbacks()
         setupReadyButton()
+
+        // Starte Presence Heartbeat (alle 10 Sekunden)
+        startPresenceHeartbeat()
 
         // Lobby-Modus
         showLobbyScreen()
@@ -246,10 +250,57 @@ class MainActivity : AppCompatActivity() {
         return String.format("%02d:%02d", minutes, seconds)
     }
 
+    /**
+     * Startet einen Heartbeat, der alle 10 Sekunden die Presence aktualisiert
+     */
+    private fun startPresenceHeartbeat() {
+        presenceTimer = object : CountDownTimer(Long.MAX_VALUE, 10000) {
+            override fun onTick(millisUntilFinished: Long) {
+                firebaseManager.updatePlayerPresence(gameId, playerId)
+            }
+
+            override fun onFinish() {
+                // Wird nie aufgerufen da Long.MAX_VALUE
+            }
+        }.start()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Markiere Spieler als offline wenn App in den Hintergrund geht
+        firebaseManager.gamesRef.child(gameId).child("players").child(playerId)
+            .child("online").setValue(false)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Markiere Spieler als online wenn App wieder aktiv wird
+        firebaseManager.gamesRef.child(gameId).child("players").child(playerId)
+            .child("online").setValue(true)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         countDownTimer?.cancel()
+        presenceTimer?.cancel()
         networkGameManager.leaveGame()
+
+        // Wenn der Host die App verlässt, lösche alle Einladungen für diese Lobby
+        if (playerId == "player_1") {
+            firebaseManager.deleteInvitationsForGame(gameId)
+        }
+    }
+
+    override fun onBackPressed() {
+        // Zeige Bestätigungs-Dialog beim Verlassen
+        AlertDialog.Builder(this)
+            .setTitle("Lobby verlassen?")
+            .setMessage("Möchtest du die Lobby wirklich verlassen?")
+            .setPositiveButton("Ja") { _, _ ->
+                super.onBackPressed()
+            }
+            .setNegativeButton("Nein", null)
+            .show()
     }
 
 }

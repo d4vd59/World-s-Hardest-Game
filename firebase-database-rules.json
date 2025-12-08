@@ -1,0 +1,25 @@
+{
+  "rules": {
+    "users": {
+      ".read": true,
+      ".indexOn": ["username"],
+      "$userId": {
+        ".write": "!data.exists()",
+        ".validate": "newData.hasChildren(['userId', 'username', 'passwordHash', 'salt', 'createdAt'])"
+      }
+    },
+    "games": {
+      ".read": true,
+      ".write": true,
+      ".indexOn": ["status", "lobbyName", "isPublic", "createdAt"]
+    },
+    "invitations": {
+      "$userId": {
+        ".read": true,
+        ".write": true,
+        ".indexOn": ["status", "timestamp"]
+      }
+    }
+  }
+}
+

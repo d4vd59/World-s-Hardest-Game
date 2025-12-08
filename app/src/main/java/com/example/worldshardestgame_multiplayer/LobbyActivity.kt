@@ -2,10 +2,10 @@ package com.example.worldshardestgame_multiplayer
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.widget.Button
 import android.widget.EditText
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 
 class LobbyActivity : AppCompatActivity() {
@@ -33,6 +33,24 @@ class LobbyActivity : AppCompatActivity() {
 
         btnJoinGame.setOnClickListener {
             showJoinGameDialog()
+        }
+
+        // Beim Start automatisch leere Lobbys aufräumen
+        cleanupOldLobbies()
+    }
+
+
+    /**
+     * Räumt automatisch alte/leere Lobbys beim Start auf
+     */
+    private fun cleanupOldLobbies() {
+        firebaseManager.cleanupEmptyGames { success, count ->
+            runOnUiThread {
+                if (success && count > 0) {
+                    Log.d("LobbyActivity", "$count leere Lobbys wurden bereinigt")
+                    Toast.makeText(this, "$count alte Lobbys bereinigt", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 

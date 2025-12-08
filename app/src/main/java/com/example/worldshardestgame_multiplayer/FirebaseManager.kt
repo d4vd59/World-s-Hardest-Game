@@ -6,9 +6,48 @@ import android.util.Log
 class FirebaseManager {
     private val database = FirebaseDatabase.getInstance("https://world-s-hardest-game-default-rtdb.europe-west1.firebasedatabase.app/")
     val gamesRef = database.getReference("games")
+    val invitationsRef = database.getReference("invitations")
 
     companion object {
         private const val TAG = "FirebaseManager"
+        private var persistenceEnabled = false
+    }
+
+    init {
+        // Aktiviere Firebase Offline Persistence (nur einmal)
+        if (!persistenceEnabled) {
+            try {
+                database.setPersistenceEnabled(true)
+                persistenceEnabled = true
+                Log.d(TAG, "Firebase Persistence aktiviert")
+            } catch (e: Exception) {
+                Log.w(TAG, "Persistence bereits aktiviert oder Fehler: ${e.message}")
+            }
+        }
+
+        // Überwache die Verbindung zu Firebase
+        setupConnectionMonitoring()
+    }
+
+    /**
+     * Überwacht die Verbindung zu Firebase und logged den Status
+     */
+    private fun setupConnectionMonitoring() {
+        val connectedRef = database.getReference(".info/connected")
+        connectedRef.addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val connected = snapshot.getValue(Boolean::class.java) ?: false
+                if (connected) {
+                    Log.d(TAG, "✅ Mit Firebase verbunden")
+                } else {
+                    Log.w(TAG, "❌ Von Firebase getrennt - onDisconnect() Callbacks werden ausgeführt")
+                }
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                Log.e(TAG, "Fehler beim Überwachen der Verbindung", error.toException())
+            }
+        })
     }
 
     // Spiel erstellen
@@ -36,8 +75,10 @@ class FirebaseManager {
                     "deaths" to 0,
                     "totalTime" to 0L,
                     "isReady" to false,
+                    "online" to false,
                     "x" to 0f,
-                    "y" to 0f
+                    "y" to 0f,
+                    "lastSeen" to ServerValue.TIMESTAMP
                 )
             )
         )
@@ -45,6 +86,8 @@ class FirebaseManager {
         gamesRef.child(gameId).setValue(gameData)
             .addOnSuccessListener {
                 Log.d(TAG, "Game created: $gameId")
+                // Setze onDisconnect für automatisches Cleanup
+                setupPlayerPresence(gameId, "player_1")
                 onGameCreated(gameId)
             }
             .addOnFailureListener { e ->
@@ -71,13 +114,17 @@ class FirebaseManager {
                 "deaths" to 0,
                 "totalTime" to 0L,
                 "isReady" to false,
+                "online" to false,
                 "x" to 0f,
-                "y" to 0f
+                "y" to 0f,
+                "lastSeen" to ServerValue.TIMESTAMP
             )
 
             gamesRef.child(gameId).child("players").child(playerId).setValue(playerData)
                 .addOnSuccessListener {
                     Log.d(TAG, "Joined game: $gameId as $playerId")
+                    // Setze onDisconnect für automatisches Cleanup
+                    setupPlayerPresence(gameId, playerId)
                     onSuccess(playerId)
                 }
                 .addOnFailureListener { e ->
@@ -199,10 +246,6 @@ class FirebaseManager {
         )
     }
 
-    // Spiel verlassen
-    fun leaveGame(gameId: String, playerId: String) {
-        gamesRef.child(gameId).child("players").child(playerId).removeValue()
-    }
 
     // Verfügbare Spiele (Lobbys) abrufen
     fun getAvailableGames(onGamesLoaded: (List<GameLobbyInfo>) -> Unit) {
@@ -239,25 +282,29 @@ class FirebaseManager {
                     return
                 }
 
-                // Nimm die erste Lobby mit diesem Namen
-                val gameSnapshot = snapshot.children.firstOrNull()
+                // Suche die ERSTE WARTENDE Lobby mit diesem Namen (ignoriere playing/finished)
+                val gameSnapshot = snapshot.children.firstOrNull { gameSnapshot ->
+                    val status = gameSnapshot.child("status").getValue(String::class.java)
+                    val playerCount = gameSnapshot.child("players").childrenCount.toInt()
+                    // Nur wartende Lobbys mit weniger als 4 Spielern
+                    status == "waiting" && playerCount < 4
+                }
+
                 if (gameSnapshot == null) {
-                    onError("Lobby '$lobbyName' nicht gefunden")
+                    // Prüfe ob es Lobbys mit diesem Namen gibt, die aber nicht wartend sind
+                    val hasNonWaitingLobby = snapshot.children.any {
+                        it.child("status").getValue(String::class.java) != "waiting"
+                    }
+
+                    if (hasNonWaitingLobby) {
+                        onError("Lobby '$lobbyName' existiert, wartet aber nicht mehr auf Spieler")
+                    } else {
+                        onError("Lobby '$lobbyName' ist voll oder nicht gefunden")
+                    }
                     return
                 }
 
-                val status = gameSnapshot.child("status").getValue(String::class.java)
-                if (status != "waiting") {
-                    onError("Lobby '$lobbyName' hat bereits gestartet")
-                    return
-                }
-
-                val playerCount = gameSnapshot.child("players").childrenCount.toInt()
-                if (playerCount >= 4) {
-                    onError("Lobby '$lobbyName' ist voll")
-                    return
-                }
-
+                // Lobby gefunden und ist wartend
                 val gameId = gameSnapshot.child("gameId").getValue(String::class.java) ?: ""
                 joinGame(gameId, playerName, onSuccess = { playerId ->
                     onSuccess(gameId, playerId)
@@ -271,15 +318,29 @@ class FirebaseManager {
         })
     }
 
-    // Prüfen ob Lobby-Name bereits existiert
+    // Prüfen ob Lobby-Name bereits AKTUELL existiert (nur wartende Lobbys)
     fun checkLobbyNameExists(lobbyName: String, onResult: (Boolean) -> Unit, onError: ((String) -> Unit)? = null) {
+        // Query: Suche nach Lobbys mit diesem Namen UND Status "waiting"
         gamesRef.orderByChild("lobbyName").equalTo(lobbyName).addListenerForSingleValueEvent(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                // Prüfe ob es eine Lobby mit diesem Namen gibt, die noch "waiting" ist
-                val exists = snapshot.children.any {
-                    it.child("status").getValue(String::class.java) == "waiting"
+                if (!snapshot.exists()) {
+                    // Keine Lobby mit diesem Namen gefunden
+                    onResult(false)
+                    return
                 }
-                onResult(exists)
+
+                // Prüfe ob es eine WARTENDE Lobby mit diesem Namen gibt
+                // (Playing/Finished Lobbys blockieren den Namen nicht mehr)
+                val existsWaiting = snapshot.children.any { gameSnapshot ->
+                    val status = gameSnapshot.child("status").getValue(String::class.java)
+                    val playerCount = gameSnapshot.child("players").childrenCount.toInt()
+
+                    // Nur "waiting" Lobbys mit Spielern zählen
+                    status == "waiting" && playerCount > 0
+                }
+
+                Log.d(TAG, "Lobby '$lobbyName' existiert bereits wartend: $existsWaiting")
+                onResult(existsWaiting)
             }
 
             override fun onCancelled(error: DatabaseError) {
@@ -292,10 +353,672 @@ class FirebaseManager {
                     onError?.invoke("Fehler beim Prüfen der Lobby: ${error.message}")
                 }
 
-                // Fallback: Lobby existiert nicht annehmen
+                // Fallback: Lobby existiert nicht annehmen (im Zweifel erlauben)
                 onResult(false)
             }
         })
+    }
+
+    /**
+     * Entfernt einen Spieler aus dem Spiel und löscht das Spiel, wenn es leer ist
+     */
+    fun leaveGame(gameId: String, playerId: String, callback: (Boolean) -> Unit) {
+        val gameRef = database.getReference("games/$gameId")
+
+        // Erst den Spieler entfernen
+        gameRef.child("players").child(playerId).removeValue()
+        gameRef.child("positions").child(playerId).removeValue()
+
+        // Dann prüfen, ob noch Spieler übrig sind
+        gameRef.child("players").addListenerForSingleValueEvent(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                if (!snapshot.exists() || snapshot.childrenCount == 0L) {
+                    // Keine Spieler mehr übrig - lösche das gesamte Spiel UND alle Einladungen
+                    gameRef.removeValue().addOnCompleteListener { task ->
+                        if (task.isSuccessful) {
+                            // Lösche auch alle Einladungen für diese Lobby
+                            deleteInvitationsForGame(gameId)
+                            Log.d(TAG, "Spiel $gameId wurde gelöscht (keine Spieler mehr)")
+                        }
+                        callback(task.isSuccessful)
+                    }
+                } else {
+                    // Es gibt noch Spieler - prüfe ob der Host gegangen ist
+                    gameRef.child("hostId").get().addOnSuccessListener { hostSnapshot ->
+                        val currentHostId = hostSnapshot.getValue(String::class.java)
+                        if (currentHostId == playerId) {
+                            // Host ist gegangen - übertrage Host-Rechte an ersten verfügbaren Spieler
+                            val newHostId = snapshot.children.firstOrNull()?.key
+                            if (newHostId != null) {
+                                gameRef.child("hostId").setValue(newHostId)
+                                Log.d(TAG, "Neuer Host: $newHostId")
+                            }
+                        }
+                        callback(true)
+                    }
+                }
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                Log.e(TAG, "Fehler beim Verlassen: ${error.message}")
+                callback(false)
+            }
+        })
+    }
+
+    /**
+     * Löscht ein Spiel komplett aus der Datenbank
+     */
+    fun deleteGame(gameId: String, callback: (Boolean) -> Unit) {
+        database.getReference("games/$gameId").removeValue().addOnCompleteListener { task ->
+            if (task.isSuccessful) {
+                Log.d(TAG, "Spiel $gameId wurde erfolgreich gelöscht")
+            } else {
+                Log.e(TAG, "Fehler beim Löschen von Spiel $gameId")
+            }
+            callback(task.isSuccessful)
+        }
+    }
+
+    /**
+     * Prüft ob ein Spiel noch existiert
+     */
+    fun gameExists(gameId: String, callback: (Boolean) -> Unit) {
+        database.getReference("games/$gameId").get().addOnSuccessListener { snapshot ->
+            callback(snapshot.exists())
+        }.addOnFailureListener {
+            callback(false)
+        }
+    }
+
+    /**
+     * Entfernt alle Listener für ein bestimmtes Spiel
+     */
+    fun removeGameListeners(gameId: String) {
+        val gameRef = database.getReference("games/$gameId")
+        gameRef.removeEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {}
+            override fun onCancelled(error: DatabaseError) {}
+        })
+    }
+
+
+    /**
+     * Löscht nur leere oder veraltete Lobbys (ohne aktive Spieler)
+     * Prüft auch ob alle Spieler offline sind
+     */
+    fun cleanupEmptyGames(callback: (Boolean, Int) -> Unit) {
+        gamesRef.get().addOnSuccessListener { snapshot ->
+            var deletedCount = 0
+            var processedCount = 0
+            val totalGames = snapshot.childrenCount.toInt()
+
+            if (totalGames == 0) {
+                callback(true, 0)
+                return@addOnSuccessListener
+            }
+
+            snapshot.children.forEach { gameSnapshot ->
+                val gameId = gameSnapshot.child("gameId").getValue(String::class.java) ?: run {
+                    processedCount++
+                    if (processedCount == totalGames) callback(true, deletedCount)
+                    return@forEach
+                }
+
+                val playerCount = gameSnapshot.child("players").childrenCount.toInt()
+
+                // Lösche Spiele ohne Spieler sofort
+                if (playerCount == 0) {
+                    gamesRef.child(gameId).removeValue().addOnSuccessListener {
+                        deleteInvitationsForGame(gameId)
+                        deletedCount++
+                        processedCount++
+                        Log.d(TAG, "Leeres Spiel gelöscht: $gameId")
+                        if (processedCount == totalGames) callback(true, deletedCount)
+                    }.addOnFailureListener {
+                        processedCount++
+                        if (processedCount == totalGames) callback(true, deletedCount)
+                    }
+                    return@forEach
+                }
+
+                // Prüfe ob alle Spieler offline sind
+                var allOffline = true
+                val playersSnapshot = gameSnapshot.child("players")
+                for (playerSnapshot in playersSnapshot.children) {
+                    val online = playerSnapshot.child("online").getValue(Boolean::class.java) ?: false
+                    if (online) {
+                        allOffline = false
+                        break
+                    }
+                }
+
+                if (allOffline) {
+                    // Alle Spieler sind offline - lösche die Lobby
+                    gamesRef.child(gameId).removeValue().addOnSuccessListener {
+                        deleteInvitationsForGame(gameId)
+                        deletedCount++
+                        processedCount++
+                        Log.d(TAG, "Lobby mit nur offline Spielern gelöscht: $gameId")
+                        if (processedCount == totalGames) callback(true, deletedCount)
+                    }.addOnFailureListener {
+                        processedCount++
+                        if (processedCount == totalGames) callback(true, deletedCount)
+                    }
+                } else {
+                    processedCount++
+                    if (processedCount == totalGames) callback(true, deletedCount)
+                }
+            }
+        }.addOnFailureListener {
+            Log.e(TAG, "Fehler beim Cleanup")
+            callback(false, 0)
+        }
+    }
+
+    // Spiel erstellen mit Authentication
+    fun createGameWithAuth(
+        hostUserId: String,
+        hostName: String,
+        lobbyName: String,
+        isPublic: Boolean,
+        invitedUserIds: List<String>,
+        onGameCreated: (gameId: String, playerId: String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val gameId = gamesRef.push().key
+        if (gameId == null) {
+            onError("Fehler beim Erstellen der Game-ID")
+            return
+        }
+
+        val gameData = hashMapOf(
+            "gameId" to gameId,
+            "lobbyName" to lobbyName,
+            "hostId" to "player_1",
+            "hostUserId" to hostUserId,
+            "isPublic" to isPublic,
+            "maxPlayers" to 4,
+            "status" to "waiting",
+            "currentLevel" to 1,
+            "currentPlayerIndex" to 0,
+            "levelStartTime" to ServerValue.TIMESTAMP,
+            "timeLimit" to 180000L,
+            "createdAt" to ServerValue.TIMESTAMP,
+            "invitedUsers" to invitedUserIds,
+            "players" to hashMapOf(
+                "player_1" to hashMapOf(
+                    "playerId" to "player_1",
+                    "userId" to hostUserId,
+                    "name" to hostName,
+                    "levelsCompleted" to 0,
+                    "deaths" to 0,
+                    "totalTime" to 0L,
+                    "isReady" to false,
+                    "online" to false,
+                    "x" to 0f,
+                    "y" to 0f,
+                    "lastSeen" to ServerValue.TIMESTAMP
+                )
+            )
+        )
+
+        gamesRef.child(gameId).setValue(gameData)
+            .addOnSuccessListener {
+                Log.d(TAG, "Game created: $gameId (public=$isPublic)")
+                // Setze Presence-Detection für den Host
+                setupPlayerPresence(gameId, "player_1")
+                onGameCreated(gameId, "player_1")
+            }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "Error creating game", e)
+                onError("Fehler beim Erstellen des Spiels: ${e.message}")
+            }
+    }
+
+    // Spiel beitreten mit Authentication
+    fun joinGameWithAuth(
+        gameId: String,
+        userId: String,
+        playerName: String,
+        onSuccess: (playerId: String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        gamesRef.child(gameId).get().addOnSuccessListener { snapshot ->
+            if (!snapshot.exists()) {
+                onError("Spiel nicht gefunden")
+                return@addOnSuccessListener
+            }
+
+            // Check if game is full
+            val maxPlayers = snapshot.child("maxPlayers").getValue(Int::class.java) ?: 4
+            val players = snapshot.child("players").children.count()
+
+            if (players >= maxPlayers) {
+                onError("Lobby ist voll")
+                return@addOnSuccessListener
+            }
+
+            // Check if private and user is invited
+            val isPublic = snapshot.child("isPublic").getValue(Boolean::class.java) ?: true
+            val hostUserId = snapshot.child("hostUserId").getValue(String::class.java)
+
+            if (!isPublic && userId != hostUserId) {
+                val invitedUsers = mutableListOf<String>()
+                snapshot.child("invitedUsers").children.forEach {
+                    it.getValue(String::class.java)?.let { invitedUserId -> invitedUsers.add(invitedUserId) }
+                }
+
+                if (!invitedUsers.contains(userId)) {
+                    onError("Du bist nicht zu dieser privaten Lobby eingeladen")
+                    return@addOnSuccessListener
+                }
+            }
+
+            val playerId = "player_${players + 1}"
+
+            val playerData = hashMapOf(
+                "playerId" to playerId,
+                "userId" to userId,
+                "name" to playerName,
+                "levelsCompleted" to 0,
+                "deaths" to 0,
+                "totalTime" to 0L,
+                "isReady" to false,
+                "online" to false,
+                "x" to 0f,
+                "y" to 0f,
+                "lastSeen" to ServerValue.TIMESTAMP
+            )
+
+            gamesRef.child(gameId).child("players").child(playerId).setValue(playerData)
+                .addOnSuccessListener {
+                    Log.d(TAG, "Joined game: $gameId as $playerId")
+                    // Setze Presence-Detection für den beitretenden Spieler
+                    setupPlayerPresence(gameId, playerId)
+                    onSuccess(playerId)
+                }
+                .addOnFailureListener { e ->
+                    Log.e(TAG, "Error joining game", e)
+                    onError("Fehler beim Beitreten: ${e.message}")
+                }
+        }.addOnFailureListener { e ->
+            onError("Fehler beim Laden des Spiels: ${e.message}")
+        }
+    }
+
+    /**
+     * Sendet eine Einladung an einen User
+     */
+    fun sendInvitation(
+        gameId: String,
+        lobbyName: String,
+        fromUserId: String,
+        fromUsername: String,
+        toUserId: String,
+        toUsername: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val invitationId = invitationsRef.push().key
+        if (invitationId == null) {
+            onError("Fehler beim Erstellen der Einladungs-ID")
+            return
+        }
+
+        val invitation = hashMapOf(
+            "invitationId" to invitationId,
+            "gameId" to gameId,
+            "lobbyName" to lobbyName,
+            "fromUserId" to fromUserId,
+            "fromUsername" to fromUsername,
+            "toUserId" to toUserId,
+            "toUsername" to toUsername,
+            "status" to "pending",
+            "timestamp" to ServerValue.TIMESTAMP
+        )
+
+        invitationsRef.child(toUserId).child(invitationId).setValue(invitation)
+            .addOnSuccessListener {
+                Log.d(TAG, "Invitation sent: $fromUsername -> $toUsername for game $gameId")
+                onSuccess()
+            }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "Error sending invitation", e)
+                onError("Fehler beim Senden der Einladung: ${e.message}")
+            }
+    }
+
+    /**
+     * Hört auf neue Einladungen für einen User
+     */
+    fun listenToInvitations(
+        userId: String,
+        onInvitation: (com.example.worldshardestgame_multiplayer.models.Invitation) -> Unit
+    ) {
+        invitationsRef.child(userId).orderByChild("status").equalTo("pending")
+            .addChildEventListener(object : ChildEventListener {
+                override fun onChildAdded(snapshot: DataSnapshot, previousChildName: String?) {
+                    try {
+                        val invitationId = snapshot.child("invitationId").getValue(String::class.java) ?: return
+                        val gameId = snapshot.child("gameId").getValue(String::class.java) ?: return
+                        val lobbyName = snapshot.child("lobbyName").getValue(String::class.java) ?: return
+                        val fromUserId = snapshot.child("fromUserId").getValue(String::class.java) ?: return
+                        val fromUsername = snapshot.child("fromUsername").getValue(String::class.java) ?: return
+                        val toUserId = snapshot.child("toUserId").getValue(String::class.java) ?: return
+                        val toUsername = snapshot.child("toUsername").getValue(String::class.java) ?: return
+                        val status = snapshot.child("status").getValue(String::class.java) ?: "pending"
+                        val timestamp = snapshot.child("timestamp").getValue(Long::class.java) ?: 0
+
+                        val invitation = com.example.worldshardestgame_multiplayer.models.Invitation(
+                            invitationId = invitationId,
+                            gameId = gameId,
+                            lobbyName = lobbyName,
+                            fromUserId = fromUserId,
+                            fromUsername = fromUsername,
+                            toUserId = toUserId,
+                            toUsername = toUsername,
+                            status = status,
+                            timestamp = timestamp
+                        )
+
+                        onInvitation(invitation)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error parsing invitation", e)
+                    }
+                }
+
+                override fun onChildChanged(snapshot: DataSnapshot, previousChildName: String?) {}
+                override fun onChildRemoved(snapshot: DataSnapshot) {}
+                override fun onChildMoved(snapshot: DataSnapshot, previousChildName: String?) {}
+                override fun onCancelled(error: DatabaseError) {
+                    Log.e(TAG, "Invitation listener cancelled", error.toException())
+                }
+            })
+    }
+
+    /**
+     * Akzeptiert eine Einladung
+     */
+    fun acceptInvitation(
+        invitation: com.example.worldshardestgame_multiplayer.models.Invitation,
+        userId: String,
+        username: String,
+        onSuccess: (playerId: String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        // Erst prüfen ob die Lobby noch existiert
+        gamesRef.child(invitation.gameId).get().addOnSuccessListener { snapshot ->
+            if (!snapshot.exists()) {
+                // Lobby existiert nicht mehr
+                updateInvitationStatus(invitation.invitationId, invitation.toUserId, "declined")
+                onError("Diese Lobby existiert nicht mehr")
+                return@addOnSuccessListener
+            }
+
+            val status = snapshot.child("status").getValue(String::class.java)
+            if (status != "waiting") {
+                updateInvitationStatus(invitation.invitationId, invitation.toUserId, "declined")
+                onError("Diese Lobby wartet nicht mehr auf Spieler")
+                return@addOnSuccessListener
+            }
+
+            // Lobby beitreten
+            joinGameWithAuth(
+                gameId = invitation.gameId,
+                userId = userId,
+                playerName = username,
+                onSuccess = { playerId ->
+                    // Einladung als akzeptiert markieren
+                    updateInvitationStatus(invitation.invitationId, invitation.toUserId, "accepted")
+                    onSuccess(playerId)
+                },
+                onError = { error ->
+                    updateInvitationStatus(invitation.invitationId, invitation.toUserId, "declined")
+                    onError(error)
+                }
+            )
+        }.addOnFailureListener { e ->
+            onError("Fehler beim Laden der Lobby: ${e.message}")
+        }
+    }
+
+    /**
+     * Lehnt eine Einladung ab
+     */
+    fun declineInvitation(
+        invitationId: String,
+        userId: String,
+        onSuccess: () -> Unit
+    ) {
+        updateInvitationStatus(invitationId, userId, "declined")
+        onSuccess()
+    }
+
+    /**
+     * Aktualisiert den Status einer Einladung
+     */
+    private fun updateInvitationStatus(invitationId: String, userId: String, status: String) {
+        invitationsRef.child(userId).child(invitationId).child("status").setValue(status)
+        Log.d(TAG, "Invitation $invitationId updated to: $status")
+    }
+
+    /**
+     * Löscht alle Einladungen für eine Lobby (wenn Lobby gelöscht wird)
+     */
+    fun deleteInvitationsForGame(gameId: String) {
+        invitationsRef.get().addOnSuccessListener { snapshot ->
+            snapshot.children.forEach { userSnapshot ->
+                userSnapshot.children.forEach { invitationSnapshot ->
+                    val invGameId = invitationSnapshot.child("gameId").getValue(String::class.java)
+                    if (invGameId == gameId) {
+                        invitationSnapshot.ref.removeValue()
+                    }
+                }
+            }
+            Log.d(TAG, "Deleted all invitations for game: $gameId")
+        }
+    }
+
+    /**
+     * Prüft ob eine Lobby noch aktiv ist (für Cleanup)
+     */
+    fun isLobbyActive(gameId: String, callback: (Boolean) -> Unit) {
+        gamesRef.child(gameId).get().addOnSuccessListener { snapshot ->
+            if (!snapshot.exists()) {
+                callback(false)
+                return@addOnSuccessListener
+            }
+
+            val status = snapshot.child("status").getValue(String::class.java)
+            val playerCount = snapshot.child("players").childrenCount.toInt()
+
+            // Lobby ist aktiv wenn sie existiert, status="waiting" und mindestens 1 Spieler hat
+            val isActive = status == "waiting" && playerCount > 0
+            callback(isActive)
+        }.addOnFailureListener {
+            callback(false)
+        }
+    }
+
+    // Set zum Tracken welche GameIDs bereits einen Cleanup-Listener haben
+    private val gameCleanupListeners = mutableSetOf<String>()
+
+    /**
+     * Setzt die Presence-Detection für einen Spieler auf.
+     * Wenn der Spieler die Verbindung verliert, wird er automatisch entfernt.
+     */
+    fun setupPlayerPresence(gameId: String, playerId: String) {
+        val playerRef = gamesRef.child(gameId).child("players").child(playerId)
+        val gameRef = gamesRef.child(gameId)
+
+        // Setze Spieler als online
+        playerRef.child("online").setValue(true)
+        playerRef.child("lastSeen").setValue(ServerValue.TIMESTAMP)
+
+        // WICHTIG: Bei Disconnect entferne den Spieler komplett aus der Lobby
+        // Das verhindert, dass leere Lobbys zurückbleiben
+        playerRef.onDisconnect().removeValue().addOnSuccessListener {
+            Log.d(TAG, "onDisconnect für $playerId in $gameId registriert")
+        }.addOnFailureListener { e ->
+            Log.e(TAG, "Fehler beim Registrieren von onDisconnect für $playerId", e)
+        }
+
+        // Lösche auch die Position bei Disconnect
+        gamesRef.child(gameId).child("positions").child(playerId)
+            .onDisconnect().removeValue()
+
+        // WICHTIG: Setze einen dauerhaften Cleanup-Listener für diese Lobby
+        // Dieser überwacht die Spielerliste und löscht die Lobby wenn sie leer wird
+        setupGameCleanupListener(gameId)
+    }
+
+
+
+    /**
+     * Registriert einen dauerhaften Listener der das Spiel löscht wenn keine Spieler mehr vorhanden sind.
+     * Wird nur einmal pro Spiel aufgerufen.
+     *
+     * Da onDisconnect() die Spieler automatisch entfernt, überwachen wir nur ob die Spielerliste leer wird.
+     */
+    private fun setupGameCleanupListener(gameId: String) {
+        // Wenn bereits ein Listener für dieses Spiel existiert, nichts tun
+        if (gameCleanupListeners.contains(gameId)) {
+            return
+        }
+
+        gameCleanupListeners.add(gameId)
+        val gameRef = gamesRef.child(gameId)
+
+        // Überwache die Spielerliste - wenn sie leer wird, lösche die Lobby
+        gameRef.child("players").addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                if (!snapshot.exists() || snapshot.childrenCount == 0L) {
+                    // Keine Spieler mehr vorhanden - lösche das Spiel sofort
+                    Log.d(TAG, "Keine Spieler mehr in $gameId - lösche Spiel")
+                    gameRef.removeValue().addOnSuccessListener {
+                        deleteInvitationsForGame(gameId)
+                        gameCleanupListeners.remove(gameId)
+                        Log.d(TAG, "Spiel $gameId automatisch gelöscht (keine Spieler)")
+                    }
+                }
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                Log.e(TAG, "Fehler beim Überwachen der Spieler-Präsenz", error.toException())
+                gameCleanupListeners.remove(gameId)
+            }
+        })
+    }
+
+    /**
+     * Aktualisiert den lastSeen Timestamp eines Spielers
+     */
+    fun updatePlayerPresence(gameId: String, playerId: String) {
+        gamesRef.child(gameId).child("players").child(playerId)
+            .child("lastSeen").setValue(ServerValue.TIMESTAMP)
+    }
+
+    /**
+     * Entfernt inaktive Spieler aus einer Lobby (lastSeen > 30 Sekunden)
+     */
+    fun cleanupInactivePlayers(gameId: String) {
+        val gameRef = gamesRef.child(gameId)
+        val currentTime = System.currentTimeMillis()
+        val timeout = 30000L // 30 Sekunden
+
+        gameRef.child("players").get().addOnSuccessListener { snapshot ->
+            val inactivePlayers = mutableListOf<String>()
+
+            for (playerSnapshot in snapshot.children) {
+                val lastSeen = playerSnapshot.child("lastSeen").getValue(Long::class.java) ?: 0L
+                if (currentTime - lastSeen > timeout) {
+                    playerSnapshot.key?.let { inactivePlayers.add(it) }
+                }
+            }
+
+            // Entferne inaktive Spieler
+            inactivePlayers.forEach { playerId ->
+                Log.d(TAG, "Entferne inaktiven Spieler: $playerId")
+                leaveGame(gameId, playerId) { }
+            }
+        }
+    }
+
+    /**
+     * Räumt alte oder leere Lobbys auf
+     * - Löscht Lobbys, die älter als 1 Stunde sind und alle Spieler offline sind
+     * - Löscht Lobbys ohne Spieler
+     */
+    fun cleanupOldLobbies() {
+        gamesRef.get().addOnSuccessListener { snapshot ->
+            val currentTime = System.currentTimeMillis()
+            val maxAge = 3600000L // 1 Stunde
+
+            for (gameSnapshot in snapshot.children) {
+                val gameId = gameSnapshot.key ?: continue
+
+                // Prüfe ob Lobby Spieler hat
+                val playersSnapshot = gameSnapshot.child("players")
+                if (!playersSnapshot.exists() || playersSnapshot.childrenCount == 0L) {
+                    // Keine Spieler - lösche Lobby
+                    Log.d(TAG, "Lösche leere Lobby: $gameId")
+                    gamesRef.child(gameId).removeValue().addOnSuccessListener {
+                        deleteInvitationsForGame(gameId)
+                    }
+                    continue
+                }
+
+                // Prüfe ob alle Spieler offline sind
+                var anyOnline = false
+                for (playerSnapshot in playersSnapshot.children) {
+                    val online = playerSnapshot.child("online").getValue(Boolean::class.java) ?: false
+                    if (online) {
+                        anyOnline = true
+                        break
+                    }
+                }
+
+                if (!anyOnline) {
+                    // Alle offline - prüfe Alter der Lobby
+                    val createdAt = gameSnapshot.child("createdAt").getValue(Long::class.java) ?: 0L
+                    if (createdAt > 0 && currentTime - createdAt > maxAge) {
+                        Log.d(TAG, "Lösche alte Lobby mit offline Spielern: $gameId")
+                        gamesRef.child(gameId).removeValue().addOnSuccessListener {
+                            deleteInvitationsForGame(gameId)
+                        }
+                    } else {
+                        // Lobby ist nicht alt genug - lösche nach 10 Sekunden wenn immer noch alle offline
+                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                            gamesRef.child(gameId).child("players").get().addOnSuccessListener { checkSnapshot ->
+                                var stillAnyOnline = false
+                                for (playerSnapshot in checkSnapshot.children) {
+                                    val online = playerSnapshot.child("online").getValue(Boolean::class.java) ?: false
+                                    if (online) {
+                                        stillAnyOnline = true
+                                        break
+                                    }
+                                }
+
+                                if (!stillAnyOnline && (!checkSnapshot.exists() || checkSnapshot.childrenCount == 0L)) {
+                                    Log.d(TAG, "Lösche Lobby mit dauerhaft offline Spielern: $gameId")
+                                    gamesRef.child(gameId).removeValue().addOnSuccessListener {
+                                        deleteInvitationsForGame(gameId)
+                                    }
+                                } else if (!stillAnyOnline) {
+                                    Log.d(TAG, "Lösche Lobby - alle Spieler offline: $gameId")
+                                    gamesRef.child(gameId).removeValue().addOnSuccessListener {
+                                        deleteInvitationsForGame(gameId)
+                                    }
+                                }
+                            }
+                        }, 10000) // 10 Sekunden Wartezeit
+                    }
+                }
+            }
+        }.addOnFailureListener { e ->
+            Log.e(TAG, "Fehler beim Cleanup alter Lobbys", e)
+        }
     }
 }
 

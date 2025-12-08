@@ -152,7 +152,13 @@ class NetworkGameManager(
 
     // Spiel verlassen
     fun leaveGame() {
-        firebaseManager.leaveGame(gameId, playerId)
+        firebaseManager.leaveGame(gameId, playerId) { success ->
+            if (success) {
+                Log.d(TAG, "Successfully left game $gameId")
+            } else {
+                Log.e(TAG, "Failed to leave game $gameId")
+            }
+        }
     }
 }
 
