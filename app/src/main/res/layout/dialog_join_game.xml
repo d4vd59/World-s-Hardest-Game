@@ -14,11 +14,13 @@
 
     <EditText
         android:id="@+id/etGameId"
+        style="@style/CustomEditText"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:hint="z.B. -NxYz1234..."
         android:inputType="text"
         android:textSize="16sp"
+        android:textColor="#000000"
         android:padding="12dp"
         android:background="@android:drawable/edit_text"/>
 

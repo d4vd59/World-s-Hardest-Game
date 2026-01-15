@@ -18,22 +18,26 @@
 
     <EditText
         android:id="@+id/etPlayerName"
+        style="@style/CustomEditText"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:hint="Dein Name"
         android:inputType="text"
         android:textSize="18sp"
+        android:textColor="#000000"
         android:padding="16dp"
         android:background="@android:drawable/edit_text"
         android:layout_marginBottom="16dp"/>
 
     <EditText
         android:id="@+id/etLobbyName"
+        style="@style/CustomEditText"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:hint="Lobby Name (nur für neues Spiel)"
         android:inputType="text"
         android:textSize="18sp"
+        android:textColor="#000000"
         android:padding="16dp"
         android:background="@android:drawable/edit_text"
         android:layout_marginBottom="24dp"/>
@@ -73,4 +77,3 @@
         android:layout_marginTop="32dp"/>
 
 </LinearLayout>
-
