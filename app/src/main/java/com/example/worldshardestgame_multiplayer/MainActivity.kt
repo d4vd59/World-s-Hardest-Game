@@ -248,7 +248,7 @@ class MainActivity : AppCompatActivity() {
                 // Starte mein Spiel wenn noch nicht gestartet
                 if (!gameView.isGameRunning) {
                     levelStartTime = System.currentTimeMillis()
-                    gameView.startLevel()
+                    gameView.post { gameView.startLevel() }
                 }
 
                 // Prüfe ob jemand gewonnen hat

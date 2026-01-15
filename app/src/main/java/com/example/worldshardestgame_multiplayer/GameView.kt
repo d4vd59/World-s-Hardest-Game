@@ -122,9 +122,8 @@ class GameView @JvmOverloads constructor(
     private fun initLevel() {
         // Level-Box (Ränder) basierend auf View-Größe positionieren
         val margin = 50f
-        // Platz am unteren Rand freihalten für UI (Info-Panel)
-        val bottomInset = 220f
-        levelBounds.set(margin, margin, width - margin, height - margin - bottomInset)
+        // Platz am unteren Rand freihalten für UI (Info-Panel) - entfernt, da Layout bereits constrained
+        levelBounds.set(margin, margin, width - margin, height - margin)
 
         // Innerer Bereich in dem sich Spieler und Hindernisse bewegen
         val innerLeft = levelBounds.left + wallThickness
