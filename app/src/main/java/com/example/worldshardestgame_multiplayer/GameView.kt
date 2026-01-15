@@ -188,8 +188,24 @@ class GameView @JvmOverloads constructor(
             // Optional: ein paar Münzen oberhalb des ersten Lanes und am Ziel
             coins.add(Coin(innerBounds.centerX(), innerBounds.top + 20f, 20f))
             coins.add(Coin(innerBounds.centerX(), innerBounds.bottom - 40f, 20f))
+        } else if (currentLevel == 3) {
+            // Level 3: Diagonale und vertikale Bewegungen für mehr Komplexität
+            obstacles.add(Enemy(innerBounds.centerX() - 100f, innerBounds.centerY() - 100f, 2.5f * obstacleSpeedMultiplier, 2.5f * obstacleSpeedMultiplier, 30f))
+            obstacles.add(Enemy(innerBounds.centerX() + 100f, innerBounds.centerY() - 100f, -2.5f * obstacleSpeedMultiplier, 2.5f * obstacleSpeedMultiplier, 30f))
+            obstacles.add(Enemy(innerBounds.centerX() - 100f, innerBounds.centerY() + 100f, 2.5f * obstacleSpeedMultiplier, -2.5f * obstacleSpeedMultiplier, 30f))
+            obstacles.add(Enemy(innerBounds.centerX() + 100f, innerBounds.centerY() + 100f, -2.5f * obstacleSpeedMultiplier, -2.5f * obstacleSpeedMultiplier, 30f))
+            obstacles.add(Enemy(innerBounds.centerX(), innerBounds.centerY(), 0f * obstacleSpeedMultiplier, 3f * obstacleSpeedMultiplier, 25f))
+            obstacles.add(Enemy(innerBounds.left + 150f, innerBounds.centerY(), 3f * obstacleSpeedMultiplier, 0f * obstacleSpeedMultiplier, 28f))
+            obstacles.add(Enemy(innerBounds.right - 150f, innerBounds.centerY(), -3f * obstacleSpeedMultiplier, 0f * obstacleSpeedMultiplier, 28f))
+
+            // Münzen in den Ecken und Mitte
+            coins.add(Coin(innerBounds.left + 80f, innerBounds.top + 80f, 20f))
+            coins.add(Coin(innerBounds.right - 80f, innerBounds.top + 80f, 20f))
+            coins.add(Coin(innerBounds.left + 80f, innerBounds.bottom - 80f, 20f))
+            coins.add(Coin(innerBounds.right - 80f, innerBounds.bottom - 80f, 20f))
+            coins.add(Coin(innerBounds.centerX(), innerBounds.centerY(), 20f))
         } else {
-            // ...bestehende/ältere Level-Logik (wie vorher) - abwechslungsreiche Hindernisse
+            // Level 2: ...bestehende/ältere Level-Logik (wie vorher) - abwechslungsreiche Hindernisse
             // Kreisförmig bewegende Gegner (verschiedene Geschwindigkeiten)
             obstacles.add(Enemy(innerBounds.centerX() - 80f, innerBounds.centerY() - 120f, 3f * obstacleSpeedMultiplier, 0f, 28f))
             obstacles.add(Enemy(innerBounds.centerX() + 60f, innerBounds.centerY() - 60f, -2.5f * obstacleSpeedMultiplier, 0.8f * obstacleSpeedMultiplier, 26f))
@@ -565,6 +581,5 @@ class GameView @JvmOverloads constructor(
                 otherPlayers[playerId] = PlayerPosition(position.x, position.y)
             }
         }
-        invalidate()
     }
 }
